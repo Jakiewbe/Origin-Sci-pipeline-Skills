@@ -16,7 +16,7 @@ description: >-
 > 1. **默认粗体新罗马主题** [style_publication_minimal.json](./presets/style_publication_minimal.json)（别名 `"minimal"` / `"tnr"`）：`3.0 pt` 四周闭合粗框、`3.0 pt` 主曲线（`-w 1500`）、全图 `Times New Roman` **100% 加粗**，统一字号层级（坐标轴标题 `28 pt`、坐标刻度 `24 pt`、框内图注 `22 pt`、图中标注/数值 `22 pt`）；
 > 2. **轻量常规 Arial 主题** [style_arial_clean.json](./presets/style_arial_clean.json)（别名 `"arial"` / `"arial_clean"`）：`1.5 pt` 四周闭合细框、`2.0 pt` 主曲线（`-w 1000`）、全图 `Arial` **常规不加粗**，保持完全相同的 `28 / 24 / 22 / 22 pt` 字号与画幅坐标。
 >
-> 全系图表锁定双族像素对齐画幅（`4:3` 标准矩形单图 `10.40×7.80 in` / 内框 `6.40×4.80 in`；`1:1` 正方形单图 `9.00×7.80 in` / 内框 `4.80×4.80 in`，上下黑框边 `0.95..5.75 in` 零像素偏差）、100% 框内无框图注、纯 2D 平面圆点（`-k 2`）及统一浅彩实色填充 + `1.5 pt` 深色描边柱/箱体，由 **OriginPro 2024 原生构建 100% 可编辑 `.opju` 工程并通过 `expGraph`（`tr.Margin:=2`）直出 `600 DPI` LZW `.tif`、`300 DPI .png` 与 `_qa_previews/*_preview.jpg`**。`--skip-origin` 仅作无 Origin 环境离线兜底。
+> 全系图表统一锁定 **`10.40×7.80 in`（`3120×2339 px` @ 300 DPI，严格 `4:3` 外画幅）**，等宽/等高并排拼图零缩放失真：其中 `4:3` 标准矩形单图内框为 `(2.15, 0.95, 6.40, 4.80) in`，`1:1` 等比例正方形单图（EIS Nyquist、原位云图、热力图）内框居中锁定为 `4.80×4.80 in`（上下黑框边 `0.95..5.75 in` 零像素偏差）；配合 100% 框内无框图注、纯 2D 实心/白芯圆点（`-k 2 -kf 1/2`）及统一浅彩实色填充 + `1.5 pt` 深色描边柱/箱体，由 **OriginPro 2024 原生构建 100% 可编辑 `.opju` 工程并通过 `expGraph`（`tr.Margin:=2`）直出 `600 DPI` LZW `.tif`、`300 DPI .png` 与 `_qa_previews/*_preview.jpg`**。`--skip-origin` 仅作无 Origin 环境离线兜底。
 
 ---
 

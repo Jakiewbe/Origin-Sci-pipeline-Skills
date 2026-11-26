@@ -467,11 +467,11 @@ UNIFIED_SPEC: Dict[str, Any] = {
     "box_rect_top_in": 0.95,
     "box_rect_w_in": 6.40,
     "box_rect_h_in": 4.80,
-    # Family B: 1:1 Square Single Panel (EIS, DRT Contour, Heatmap) -> 2700 x 2340 px @ 300 DPI
-    # Shares EXACT SAME height (7.80 in), left (2.15 in), top (0.95 in), and bottom (5.75 in) as Family A!
-    "page_sq_w_in": 9.00,
+    # Family B: 1:1 Square Single Panel (EIS, DRT Contour, Heatmap) -> 3120 x 2340 px @ 300 DPI
+    # Shares EXACT SAME 10.40 x 7.80 in canvas, top (0.95 in), and bottom (5.75 in) as Family A so equal-width layouts never distort!
+    "page_sq_w_in": 10.40,
     "page_sq_h_in": 7.80,
-    "box_sq_left_in": 2.15,
+    "box_sq_left_in": 2.80,
     "box_sq_top_in": 0.95,
     "box_sq_side_in": 4.80,
     # Bode Dual-Panel (total top..bottom = 0.95 .. 5.75 in = 4.80 in, aligned 0 px with Family A & B!)
@@ -573,6 +573,14 @@ def rect_in_to_page_pct(
     )
 
 
+def compute_origin_layer_scale(lw_in: float, lh_in: float, pw_in: float, ph_in: float) -> float:
+    """Return Origin's effective `layer.fsize=1` sub-layer scaling factor (`~ sqrt(layer_area / page_area) / 0.93`)."""
+    area_ratio = (max(0.35, float(lw_in)) * max(0.35, float(lh_in))) / (
+        max(2.0, float(pw_in)) * max(2.0, float(ph_in))
+    )
+    return max(0.12, min(1.0, math.sqrt(area_ratio) / 0.93))
+
+
 def compensate_origin_layer_pt(
     target_true_pt: float, lw_in: float, lh_in: float, pw_in: float, ph_in: float
 ) -> float:
@@ -580,11 +588,8 @@ def compensate_origin_layer_pt(
     Compensate Origin's automatic sub-layer font downscaling (`scale ~ sqrt(layer_area/page_area) / 0.93`)
     so native `layer.x.label.pt` / `layer.y.label.pt` render at the exact same pixel height as `gl_ov` true points.
     """
-    area_ratio = (max(0.35, float(lw_in)) * max(0.35, float(lh_in))) / (
-        max(2.0, float(pw_in)) * max(2.0, float(ph_in))
-    )
-    scale_fac = min(1.0, math.sqrt(area_ratio) / 0.93)
-    return round(float(target_true_pt) / max(0.12, scale_fac), 2)
+    scale_fac = compute_origin_layer_scale(lw_in, lh_in, pw_in, ph_in)
+    return round(float(target_true_pt) / scale_fac, 2)
 
 
 def compute_pastel_fill_and_border(

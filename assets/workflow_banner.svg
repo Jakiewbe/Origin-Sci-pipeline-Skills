@@ -1,0 +1,179 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 280" width="1200" height="280" role="img" aria-label="SciOrigin v6.0 4-Card Scientific Audit and Headless OriginPro 2024 Native Pipeline">
+  <defs>
+    <linearGradient id="engineAccent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2B6CB0"/>
+      <stop offset="28%" stop-color="#3E86DE"/>
+      <stop offset="55%" stop-color="#6579BE"/>
+      <stop offset="80%" stop-color="#D84B5C"/>
+      <stop offset="100%" stop-color="#A02333"/>
+    </linearGradient>
+    <filter id="cardShadow" x="-2%" y="-4%" width="104%" height="112%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#0F172A" flood-opacity="0.045"/>
+    </filter>
+  </defs>
+
+  <!-- Outer Light Academic Canvas -->
+  <rect x="4" y="4" width="1192" height="272" rx="16" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+
+  <!-- ======================================================================= -->
+  <!-- ROW 1: 4-CARD SCIENTIFIC AUDIT PIPELINE (y = 18..108)                   -->
+  <!-- ======================================================================= -->
+
+  <!-- Card 01: Inspect -->
+  <g filter="url(#cardShadow)">
+    <rect x="24" y="18" width="264" height="90" rx="10" fill="#FFFFFF" stroke="#DCE4F0" stroke-width="1.2"/>
+    <rect x="25" y="19" width="262" height="5" rx="2.5" fill="#2B6CB0"/>
+    <rect x="38" y="32" width="34" height="22" rx="6" fill="#2B6CB0"/>
+    <text x="55" y="47" text-anchor="middle" font-family="'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="700" fill="#FFFFFF">01</text>
+    <text x="80" y="48" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="14.5" font-weight="700" fill="#111111">核对数据 Inspect</text>
+    <text x="38" y="72" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" fill="#334155">谱区/工步/单位核验 · SNR 侦察</text>
+    <text x="38" y="93" font-family="Consolas, 'Segoe UI', Arial, monospace" font-size="11" fill="#64748B">scan · inspect · raw_preview</text>
+  </g>
+
+  <!-- Arrow 01 -> 02 -->
+  <g stroke="#2B6CB0" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="293" y1="63" x2="313" y2="63"/>
+    <polyline points="308,58 314,63 308,68"/>
+  </g>
+
+  <!-- Card 02: Method -->
+  <g filter="url(#cardShadow)">
+    <rect x="320" y="18" width="264" height="90" rx="10" fill="#FFFFFF" stroke="#DCE4F0" stroke-width="1.2"/>
+    <rect x="321" y="19" width="262" height="5" rx="2.5" fill="#3E86DE"/>
+    <rect x="334" y="32" width="34" height="22" rx="6" fill="#3E86DE"/>
+    <text x="351" y="47" text-anchor="middle" font-family="'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="700" fill="#FFFFFF">02</text>
+    <text x="376" y="48" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="14.5" font-weight="700" fill="#111111">选择方法 Method</text>
+    <text x="334" y="72" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" fill="#334155">物理约束分峰 · 严禁盲套预设</text>
+    <text x="334" y="93" font-family="Consolas, 'Segoe UI', Arial, monospace" font-size="11" fill="#64748B">deconvolve · chart_grammar</text>
+  </g>
+
+  <!-- Arrow 02 -> 03 -->
+  <g stroke="#3E86DE" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="589" y1="63" x2="609" y2="63"/>
+    <polyline points="604,58 610,63 604,68"/>
+  </g>
+
+  <!-- Card 03: Audit -->
+  <g filter="url(#cardShadow)">
+    <rect x="616" y="18" width="264" height="90" rx="10" fill="#FFFFFF" stroke="#DCE4F0" stroke-width="1.2"/>
+    <rect x="617" y="19" width="262" height="5" rx="2.5" fill="#6579BE"/>
+    <rect x="630" y="32" width="34" height="22" rx="6" fill="#6579BE"/>
+    <text x="647" y="47" text-anchor="middle" font-family="'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="700" fill="#FFFFFF">03</text>
+    <text x="672" y="48" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="14.5" font-weight="700" fill="#111111">审查结论 Audit</text>
+    <text x="630" y="72" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" fill="#334155">多模型敏感性对比 · 触界拦截</text>
+    <text x="630" y="93" font-family="Consolas, 'Segoe UI', Arial, monospace" font-size="11" fill="#64748B">model_sensitivity · WARN_BOUND</text>
+  </g>
+
+  <!-- Arrow 03 -> 04 -->
+  <g stroke="#6579BE" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="885" y1="63" x2="905" y2="63"/>
+    <polyline points="900,58 906,63 900,68"/>
+  </g>
+
+  <!-- Card 04: Deliver -->
+  <g filter="url(#cardShadow)">
+    <rect x="912" y="18" width="264" height="90" rx="10" fill="#FFFFFF" stroke="#DCE4F0" stroke-width="1.2"/>
+    <rect x="913" y="19" width="262" height="5" rx="2.5" fill="#D84B5C"/>
+    <rect x="926" y="32" width="34" height="22" rx="6" fill="#D84B5C"/>
+    <text x="943" y="47" text-anchor="middle" font-family="'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="700" fill="#FFFFFF">04</text>
+    <text x="968" y="48" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="14.5" font-weight="700" fill="#111111">原生交付 Deliver</text>
+    <text x="926" y="72" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" fill="#334155">双套出版预设 · 同画布像素对齐</text>
+    <text x="926" y="93" font-family="Consolas, 'Segoe UI', Arial, monospace" font-size="11" fill="#64748B">TNR Bold 3pt | Arial Clean 1.5pt</text>
+  </g>
+
+  <!-- ======================================================================= -->
+  <!-- PIPELINE BUS CONNECTOR (Row 1 Audit Gateways -> Row 2 Execution Engine) -->
+  <!-- ======================================================================= -->
+  <g stroke="#6579BE" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="156" y1="108" x2="156" y2="121"/>
+    <line x1="452" y1="108" x2="452" y2="121"/>
+    <line x1="748" y1="108" x2="748" y2="121"/>
+    <line x1="1044" y1="108" x2="1044" y2="121"/>
+    <line x1="156" y1="121" x2="1044" y2="121" stroke-dasharray="5,3"/>
+    <line x1="226" y1="121" x2="226" y2="133" stroke="#2B6CB0" stroke-width="2.2"/>
+    <polyline points="221,128 226,134 231,128" stroke="#2B6CB0" stroke-width="2.2"/>
+  </g>
+  <circle cx="156" cy="108" r="2.8" fill="#2B6CB0"/>
+  <circle cx="452" cy="108" r="2.8" fill="#3E86DE"/>
+  <circle cx="748" cy="108" r="2.8" fill="#6579BE"/>
+  <circle cx="1044" cy="108" r="2.8" fill="#D84B5C"/>
+
+  <!-- ======================================================================= -->
+  <!-- ROW 2: MODES -> HEADLESS ORIGINPRO 2024 COM -> NATIVE DELIVERABLES      -->
+  <!-- ======================================================================= -->
+
+  <!-- Block A: 14 Characterization Pipelines + 12 Declarative Chart Grammar Modes -->
+  <g filter="url(#cardShadow)">
+    <rect x="24" y="136" width="404" height="126" rx="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+    <text x="40" y="159" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="13.5" font-weight="700" fill="#111111">26 Modes · 表征解析与声明式图型路由</text>
+
+    <!-- Sub-box 1: 14 Characterization Pipelines -->
+    <rect x="38" y="170" width="182" height="78" rx="8" fill="#F2F7FD" stroke="#2B6CB0" stroke-width="1.2"/>
+    <text x="48" y="189" font-family="'Segoe UI', Arial, sans-serif" font-size="12" font-weight="700" fill="#2B6CB0">14 Characterization</text>
+    <text x="48" y="208" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="11.5" font-weight="600" fill="#111111">Pipelines · 表征与分峰</text>
+    <text x="48" y="226" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="10.5" fill="#475569">XPS / Raman / XRD / FTIR</text>
+    <text x="48" y="241" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="10.5" fill="#475569">BET / 粒度 / EPR / 恒流倍率</text>
+
+    <!-- Sub-box 2: 12 Declarative Chart Grammar Modes -->
+    <rect x="232" y="170" width="182" height="78" rx="8" fill="#F4F5FC" stroke="#6579BE" stroke-width="1.2"/>
+    <text x="242" y="189" font-family="'Segoe UI', Arial, sans-serif" font-size="12" font-weight="700" fill="#6579BE">12 Chart Grammar</text>
+    <text x="242" y="208" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="11.5" font-weight="600" fill="#111111">Modes · 声明式图型语法</text>
+    <text x="242" y="226" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="10.5" fill="#475569">2×2 拼版 / 双Y轴 / 拟合置信带</text>
+    <text x="242" y="241" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="10.5" fill="#475569">2D 原位云图 / 热力图 / 箱线</text>
+  </g>
+
+  <!-- Arrow Block A -> Block B -->
+  <g stroke="#3E86DE" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="434" y1="199" x2="455" y2="199"/>
+    <polyline points="449,193 456,199 449,205"/>
+  </g>
+
+  <!-- Block B: Headless OriginPro 2024 COM Engine -->
+  <g filter="url(#cardShadow)">
+    <rect x="462" y="136" width="316" height="126" rx="12" fill="#FFFFFF" stroke="#D84B5C" stroke-width="1.6"/>
+    <rect x="463" y="137" width="314" height="5" rx="2.5" fill="url(#engineAccent)"/>
+
+    <!-- Mini Deconvolution Emblem -->
+    <rect x="478" y="150" width="34" height="34" rx="8" fill="#111111"/>
+    <path d="M 482 178 Q 489 178 493 166 Q 497 155 501 166 Q 505 178 509 178 Z" fill="#3E86DE" fill-opacity="0.75"/>
+    <path d="M 491 178 Q 497 178 501 163 Q 505 151 508 166 Q 510 178 511 178 Z" fill="#D84B5C" fill-opacity="0.8"/>
+    <path d="M 482 177 C 488 177, 491 160, 495 157 C 498 155, 500 163, 503 155 C 506 151, 509 172, 511 177" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round"/>
+
+    <text x="520" y="164" font-family="'Segoe UI', Arial, sans-serif" font-size="14" font-weight="700" fill="#A02333">Headless OriginPro 2024</text>
+    <text x="520" y="181" font-family="'Segoe UI', Arial, sans-serif" font-size="11.5" font-weight="600" fill="#475569">COM Engine · originpro + OriginExt</text>
+
+    <rect x="478" y="193" width="284" height="25" rx="6" fill="#F8FAFC" stroke="#DCE4F0" stroke-width="1"/>
+    <text x="620" y="210" text-anchor="middle" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="11.5" fill="#111111">10.40×7.80 in 同画布 · 4:3 与 1:1 内框锁定</text>
+
+    <rect x="478" y="224" width="284" height="25" rx="6" fill="#FDF2F4" stroke="#F1C4CC" stroke-width="1"/>
+    <text x="620" y="241" text-anchor="middle" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="11.5" font-weight="600" fill="#A02333">1052B RIFF .pal 色板 · expGraph 原生直出</text>
+  </g>
+
+  <!-- Arrow Block B -> Block C -->
+  <g stroke="#A02333" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="784" y1="199" x2="805" y2="199"/>
+    <polyline points="799,193 806,199 799,205"/>
+  </g>
+
+  <!-- Block C: 4 Native Deliverables -->
+  <g filter="url(#cardShadow)">
+    <rect x="812" y="136" width="364" height="126" rx="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+    <text x="828" y="159" font-family="'Segoe UI', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="13.5" font-weight="700" fill="#111111">同源四件套交付 · Native Deliverables</text>
+
+    <!-- Chip 1: .opju Editable Project -->
+    <rect x="826" y="171" width="164" height="35" rx="7" fill="#FDF2F4" stroke="#D84B5C" stroke-width="1.3"/>
+    <text x="908" y="193" text-anchor="middle" font-family="Consolas, 'Segoe UI', Arial, sans-serif" font-size="11.5" font-weight="700" fill="#A02333">.opju Editable Project</text>
+
+    <!-- Chip 2: 600 DPI LZW .tif -->
+    <rect x="998" y="171" width="164" height="35" rx="7" fill="#F2F7FD" stroke="#2B6CB0" stroke-width="1.3"/>
+    <text x="1080" y="193" text-anchor="middle" font-family="Consolas, 'Segoe UI', Arial, sans-serif" font-size="11.5" font-weight="700" fill="#2B6CB0">600 DPI LZW .tif</text>
+
+    <!-- Chip 3: Source-Data .xlsx -->
+    <rect x="826" y="213" width="164" height="35" rx="7" fill="#F4F5FC" stroke="#6579BE" stroke-width="1.3"/>
+    <text x="908" y="235" text-anchor="middle" font-family="Consolas, 'Segoe UI', Arial, sans-serif" font-size="11.5" font-weight="700" fill="#6579BE">Source-Data .xlsx</text>
+
+    <!-- Chip 4: quality_audit.json -->
+    <rect x="998" y="213" width="164" height="35" rx="7" fill="#F8FAFC" stroke="#111111" stroke-width="1.3"/>
+    <text x="1080" y="235" text-anchor="middle" font-family="Consolas, 'Segoe UI', Arial, sans-serif" font-size="11.5" font-weight="700" fill="#111111">quality_audit.json</text>
+  </g>
+</svg>

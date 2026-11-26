@@ -801,13 +801,12 @@ def _plot_layer_into_glayer(
                 p_w.color = c_oc
                 gl.lt_exec(f"range rw = !{w_idx}; set rw -w {bx_wh_w};")
 
-            # Jittered replicate pure 2D solid circles (`-k 2`, `symbol_interior=1`)
+            # Jittered replicate pure 2D solid circles (`symbol_kind=2, symbol_interior=0`)
             p_pt = gl.add_plot(wks_bx, coly=b0 + 16, colx=b0 + 15, type="s")
-            pt_idx = len(gl.plot_list())
             p_pt.color = c_oc
             p_pt.symbol_size = bx_mk_sz
-            p_pt.symbol_interior = 1
-            gl.lt_exec(f"range rpt = !{pt_idx}; set rpt -k 2;")
+            p_pt.symbol_kind = 2
+            p_pt.symbol_interior = 0
 
             leg_entries.append((out_idx, str(gm["label"]), pb_bx["border_hex"], "bar"))
 
@@ -907,17 +906,21 @@ def _plot_layer_into_glayer(
         cmd_parts: List[str] = []
         if has_line:
             cmd_parts.append(f"set rm -w {w_units}; set rm -d {d_code};")
-        if has_marker and m_shape is not None:
-            p_main.symbol_size = float(s.marker_size_pt or spec["marker_size_pt"])
-            if m_shape != 20:
-                p_main.symbol_interior = int(m_int)
-            cmd_parts.append(f"set rm -k {m_shape};")
+        if has_marker and m_shape == 20:
+            cmd_parts.append("set rm -k 20;")
         if c_map["up"] is None and s.fill_alpha is not None and s.fill_alpha > 0 and has_line:
             p_main.set_fill_area(above=c_color, type=1, below=c_color)
             p_main.transparency = int(round((1.0 - float(s.fill_alpha)) * 100.0))
 
         if cmd_parts:
             gl.lt_exec(f"range rm = !{main_idx}; " + " ".join(cmd_parts))
+
+        if has_marker and m_shape is not None and m_shape != 20:
+            p_main.symbol_size = float(s.marker_size_pt or spec["marker_size_pt"])
+            # Python symbol_kind matches LabTalk shape code (1=sq, 2=circle, 3=up-tri, 4=down-tri, 5=diamond)
+            p_main.symbol_kind = int(m_shape)
+            # Python symbol_interior: 0 = Solid filled, 1 = Open white-filled (m_int is 1 for solid, 2 for open)
+            p_main.symbol_interior = 1 if int(m_int) == 2 else 0
 
         if after_cnt >= before_cnt + 2:
             gl.lt_exec(f"range re = !{after_cnt}; set re -w {sub_w_u}; set re -c {err_ink};")
@@ -1274,18 +1277,17 @@ def _resolve_inset_bbox_pct(ins: cg.InsetSpec, panel: cg.PanelSpec) -> Tuple[flo
     l_p, t_p, w_p, h_p = [float(v) for v in ins.bbox_pct]
     show_ins_titles = ins.mode in ("subchart", "subpanel")
     if panel.equal_aspect:
-        if l_p < 44.0:
-            r_edge = l_p + w_p
-            l_p = 45.0
-            w_p = max(44.0, r_edge - l_p + 2.0)
         if show_ins_titles:
-            t_p = min(t_p, 30.0)
-            h_p = min(h_p, 46.0)
+            l_p = max(l_p, 48.0)
+            t_p = min(t_p, 34.0)
+            w_p = min(w_p, 42.0)
+            h_p = min(h_p, 42.0)
         else:
-            # Zoom inset has no bottom axis title: keep at `top >= 40%` well below 3-row upper-right legend!
-            t_p = max(40.0, min(t_p, 44.0))
-            w_p = min(w_p, 46.0)
-            h_p = min(h_p, 46.0)
+            # Crisp 41% x 41% square zoom inset in lower-right quadrant, clear of curves & legend!
+            l_p = max(l_p, 50.0)
+            t_p = max(43.0, min(t_p, 45.0))
+            w_p = min(w_p, 41.0)
+            h_p = min(h_p, 41.0)
     return l_p, t_p, w_p, h_p
 
 
@@ -1358,12 +1360,28 @@ def _render_insets_for_panel(
         p_ibl.transparency = 100
         gl_in.lt_exec("range rbu = !1; set rbu -w 0; range rbl = !2; set rbl -w 0;")
 
+        l_p, t_p, w_p, h_p = _resolve_inset_bbox_pct(ins, panel)
+        ins_w_in = par_w_in * (w_p / 100.0)
+        ins_h_in = par_h_in * (h_p / 100.0)
+        ins_scale = ot.compute_origin_layer_scale(ins_w_in, ins_h_in, pw_in, ph_in)
+        ins_target_lw = round((float(spec["curve_lw_pt"]) * 0.72) / ins_scale, 2)
+        ins_target_mk = round(4.8 / ins_scale, 1)
+
         for sub_ly in ins.layers:
             for sub_s in sub_ly.series:
-                sub_s.marker_size_pt = min(float(sub_s.marker_size_pt or 5.2), 5.2)
+                orig_lw, orig_mk = sub_s.line_width_pt, sub_s.marker_size_pt
+                sub_s.line_width_pt = ins_target_lw
+                sub_s.marker_size_pt = ins_target_mk
+                try:
+                    pass
+                finally:
+                    pass
             _plot_layer_into_glayer(
                 op, gp, gl_in, ins_lay_num, sub_ly, panel, wb, used_sheets, pal_tmp_dir
             )
+            for sub_s in sub_ly.series:
+                sub_s.line_width_pt = float(spec["curve_lw_pt"])
+                sub_s.marker_size_pt = float(spec["marker_size_pt"])
 
         ob.activate_layer(op, gp, ins_lay_num)
         gl_in.rescale()
@@ -1372,13 +1390,10 @@ def _render_insets_for_panel(
         if ins.ylim is not None:
             gl_in.set_ylim(float(ins.ylim[0]), float(ins.ylim[1]))
 
-        l_p, t_p, w_p, h_p = _resolve_inset_bbox_pct(ins, panel)
         white_int = ot.hex_to_origin_rgb_int(ins.background_color or "#FFFFFF")
         ink_int = ot.hex_to_origin_rgb_int("#111111")
         ins_bt = float(spec["inset_box_lw_pt"])
-        ins_comp_pt = ot.compensate_origin_layer_pt(
-            float(spec["inset_tick_pt"]), par_w_in * (w_p / 100.0), par_h_in * (h_p / 100.0), pw_in, ph_in
-        )
+        ins_comp_pt = ot.compensate_origin_layer_pt(float(spec["inset_tick_pt"]), ins_w_in, ins_h_in, pw_in, ph_in)
         x_log = 1 if ins.x_axis.scale == "log10" else 0
         y_log = 1 if ins.y_axis.scale == "log10" else 0
         ins_xt = 5 if x_log else 1
@@ -1408,6 +1423,11 @@ def _render_insets_for_panel(
             gl_in.lt_exec("layer.x.minorTicks=8; layer.x.label.numFormat=2;")
         if y_log:
             gl_in.lt_exec("layer.y.minorTicks=8; layer.y.label.numFormat=2;")
+        elif ins.xlim is not None and ins.ylim is not None and abs(float(ins.xlim[0])) < 1e-6 and abs(float(ins.ylim[0])) < 1e-6:
+            # Avoid colliding X-0 and Y-0 labels at the bottom-left corner of [0..L, 0..L] zoom insets
+            ins_step_x = ob.compute_nice_linear_step(float(ins.xlim[0]), float(ins.xlim[1]), max_ticks=3)
+            if ins_step_x and ins_step_x > 0:
+                gl_in.lt_exec(f"layer.x.inc={ins_step_x}; layer.x.firstTick={ins_step_x}; layer.y.inc={ins_step_x};")
 
         show_ins_titles = ins.mode in ("subchart", "subpanel")
         ob.style_origin_native_axis_title(
@@ -1935,11 +1955,11 @@ def _render_contour_2d_page(
     white_txt_int = ot.hex_to_origin_rgb_int("#FFFFFF")
 
     if side_panel is None:
-        # Exact Family B 1:1 Square (`8.00 x 6.90 in` canvas, `4.50 x 4.50 in` box at `(1.75, 0.58)` — 0 px height/top/bottom variance vs Family A!)
+        # Exact unified `10.40 x 7.80 in` (`3120 x 2339 px`) 4:3 page canvas with `4.80 x 4.80 in` 1:1 square box
         page_w, page_h = float(spec["page_sq_w_in"]), float(spec["page_sq_h_in"])
-        sq_left = float(spec["box_sq_left_in"])
-        sq_top = float(spec["box_sq_top_in"])
         sq_side = float(spec["box_sq_side_in"])
+        sq_top = float(spec["box_sq_top_in"])
+        sq_left = max(2.15, float(spec["box_sq_left_in"]) - 0.40)
         sq_box_in = (sq_left, sq_top, sq_side, sq_side)
         ob.set_graph_page_inches(gp, page_w, page_h)
         _apply_single_axis_layer_style(

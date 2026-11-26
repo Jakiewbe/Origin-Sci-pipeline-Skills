@@ -1154,10 +1154,13 @@ def flush_page_overlays(op: Any, gp: Any) -> None:
         p_mk = gl_ov.add_plot(wks_ov, coly=c_ptr + 1, colx=c_ptr, type="s")
         p_mk.color = _hex_to_origin_color(op, c_hex)
         p_mk.symbol_size = float(s_sz)
-        if k_code != 20:
-            p_mk.symbol_interior = int(int_code)
         p_idx = len(gl_ov.plot_list())
-        gl_ov.lt_exec(f"range rm = !{p_idx}; set rm -k {int(k_code)};")
+        if k_code == 20:
+            gl_ov.lt_exec(f"range rm = !{p_idx}; set rm -k 20;")
+        else:
+            # Origin Python API: symbol_kind=1 is 2D Circle; symbol_interior=0 is Solid, 1 is Open (white-filled)
+            p_mk.symbol_kind = 2 if int(k_code) == 2 else max(0, int(k_code) - 1)
+            p_mk.symbol_interior = 1 if int(int_code) == 2 else 0
         c_ptr += 2
 
     for xp, yb, r_str, fs, col_i, rot, pos_sc in final_texts:
@@ -1752,8 +1755,8 @@ def _populate_deconv_layer(
     raw_idx_1 = len(gl.plot_list())
     p_raw.color = _hex_to_origin_color(op, raw_hex)
     p_raw.symbol_size = 4.4 if is_small_cell else 6.2
-    p_raw.symbol_interior = 1
-    gl.lt_exec(f"range rraw = !{raw_idx_1}; set rraw -k 2;")
+    p_raw.symbol_kind = 2
+    p_raw.symbol_interior = 0
 
     fit_hex = ot.normalize_hex(theme_deconv.get("envelope_fit", "#A02333"))
     p_fit = gl.add_plot(wks, coly=3, colx=0, type="l")
@@ -2657,9 +2660,10 @@ def build_nyquist_opju(
             p_eis = gl.add_plot(wks, coly=2, colx=1, type="y")
             p_eis.color = _hex_to_origin_color(op, c_hex)
             p_eis.symbol_size = mk_sz
-            p_eis.symbol_interior = 1
             p_idx_1 = len(gl.plot_list())
-            gl.lt_exec(f"range rr = !{p_idx_1}; set rr -k 2; set rr -w {cw_u};")
+            gl.lt_exec(f"range rr = !{p_idx_1}; set rr -w {cw_u};")
+            p_eis.symbol_kind = 2
+            p_eis.symbol_interior = 0
             leg_entries.append((p_idx_1, nm, c_hex, "line_sphere"))
 
             zr, nzi = np.asarray(item["z_real"], dtype=float), np.asarray(item["neg_z_imag"], dtype=float)
@@ -2730,21 +2734,24 @@ def build_nyquist_opju(
             p_bg_u.transparency = 0
             p_bg_l.transparency = 100
             gl_in.lt_exec("range rbu = !1; set rbu -w 0; range rbl = !2; set rbl -w 0;")
-            ins_w_u = int(round(cw_u * 0.80))
+            ins_scale = ot.compute_origin_layer_scale(0.42 * sq_side, 0.42 * sq_side, pw, ph)
+            ins_w_u = int(round((cw_u * 0.72) / ins_scale))
+            ins_mk_sz = round(4.8 / ins_scale, 1)
             for _idx, (wks, _item, c_hex) in enumerate(sheets_created):
                 p_in = gl_in.add_plot(wks, coly=2, colx=1, type="y")
                 p_in.color = _hex_to_origin_color(op, c_hex)
-                p_in.symbol_size = 5.2
-                p_in.symbol_interior = 1
+                p_in.symbol_size = ins_mk_sz
                 in_idx_1 = len(gl_in.plot_list())
-                gl_in.lt_exec(f"range rin = !{in_idx_1}; set rin -k 2; set rin -w {ins_w_u};")
+                gl_in.lt_exec(f"range rin = !{in_idx_1}; set rin -w {ins_w_u};")
+                p_in.symbol_kind = 2
+                p_in.symbol_interior = 0
             gl_in.set_xlim(0.0, in_lim)
             gl_in.set_ylim(0.0, in_lim)
             ins_bt = float(spec["inset_box_lw_pt"])
-            ins_comp_pt = ot.compensate_origin_layer_pt(float(spec["inset_tick_pt"]), 0.48 * sq_side, 0.46 * sq_side, pw, ph)
+            ins_comp_pt = ot.compensate_origin_layer_pt(float(spec["inset_tick_pt"]), 0.42 * sq_side, 0.42 * sq_side, pw, ph)
             gl_in.lt_exec(
                 f"layer.fsize=1; "
-                f"layer.unit=7; layer.left=44; layer.top=30; layer.width=48; layer.height=46; "
+                f"layer.unit=7; layer.left=50; layer.top=34; layer.width=42; layer.height=42; "
                 f"layer.color={white_int}; "
                 f"layer.x.grid.show=0; layer.y.grid.show=0; "
                 f"layer.x.showAxes=3; layer.y.showAxes=3; "
@@ -2844,15 +2851,17 @@ def build_bet_opju(
         gl_iso = gp_iso[0]
         p1 = gl_iso.add_plot(wks_iso, coly=1, colx=0, type="y")
         p1.color = _hex_to_origin_color(op, "#3E86DE")
-        p1.symbol_interior = 1
         p1.symbol_size = mk_sz
-        gl_iso.lt_exec(f"range r1 = !1; set r1 -k 2; set r1 -w {cw_u};")
+        gl_iso.lt_exec(f"range r1 = !1; set r1 -w {cw_u};")
+        p1.symbol_kind = 2
+        p1.symbol_interior = 0
 
         p2 = gl_iso.add_plot(wks_iso, coly=3, colx=2, type="y")
         p2.color = _hex_to_origin_color(op, "#D84B5C")
-        p2.symbol_interior = 2
         p2.symbol_size = mk_sz
-        gl_iso.lt_exec(f"range r2 = !2; set r2 -k 2; set r2 -w {cw_u};")
+        gl_iso.lt_exec(f"range r2 = !2; set r2 -w {cw_u};")
+        p2.symbol_kind = 2
+        p2.symbol_interior = 1
 
         gl_iso.rescale()
         ymax_iso = float(max(np.max(isotherm["ads_vol"]), np.max(isotherm["des_vol"])))
@@ -2924,14 +2933,16 @@ def build_bet_opju(
         p_in_fill.transparency = 42
         gl_in.lt_exec("range rinf = !3; set rinf -w 0;")
 
+        bet_ins_scale = ot.compute_origin_layer_scale(box_in[2] * 0.45, box_in[3] * 0.36, pw, ph)
         c_line_psd = _hex_to_origin_color(op, "#2B6CB0")
         p_in = gl_in.add_plot(wks_psd, coly=1, colx=0, type="y")
         p_in.color = c_line_psd
-        p_in.symbol_size = 5.0
-        p_in.symbol_interior = 1
+        p_in.symbol_size = round(4.6 / bet_ins_scale, 1)
         p_in.transparency = 0
-        ins_w_u = int(round(cw_u * 0.80))
-        gl_in.lt_exec(f"range rin = !4; set rin -k 2; set rin -w {ins_w_u};")
+        ins_w_u = int(round((cw_u * 0.72) / bet_ins_scale))
+        gl_in.lt_exec(f"range rin = !4; set rin -w {ins_w_u};")
+        p_in.symbol_kind = 2
+        p_in.symbol_interior = 0
         gl_in.rescale()
         gl_in.set_xlim(1.0, 50.0)
         gl_in.set_ylim(0.0, psd_ytop)
@@ -2986,8 +2997,9 @@ def build_bet_opju(
         c_psd_int = _hex_to_origin_color(op, "#6579BE")
         p_psd.color = c_psd_int
         p_psd.symbol_size = mk_sz
-        p_psd.symbol_interior = 1
-        gl_psd.lt_exec(f"range rp = !1; set rp -k 2; set rp -w {cw_u};")
+        gl_psd.lt_exec(f"range rp = !1; set rp -w {cw_u};")
+        p_psd.symbol_kind = 2
+        p_psd.symbol_interior = 0
         p_psd.set_fill_area(above=c_psd_int, type=1, below=c_psd_int)
         p_psd.transparency = 60
         gl_psd.rescale()
@@ -3376,8 +3388,9 @@ def build_conductivity_opju(
         p1 = gl1.add_plot(wks, coly=1, colx=0, type="y")
         p1.color = _hex_to_origin_color(op, "#3E86DE")
         p1.symbol_size = mk_sz
-        p1.symbol_interior = 1
-        gl1.lt_exec(f"range r1 = !1; set r1 -k 2; set r1 -w {cw_u};")
+        gl1.lt_exec(f"range r1 = !1; set r1 -w {cw_u};")
+        p1.symbol_kind = 2
+        p1.symbol_interior = 0
 
         if has_density:
             activate_layer(op, gp, 1)
@@ -3429,8 +3442,9 @@ def build_conductivity_opju(
             p2 = gl2.add_plot(wks, coly=2, colx=0, type="y")
             p2.color = _hex_to_origin_color(op, "#A02333")
             p2.symbol_size = mk_sz
-            p2.symbol_interior = 2
-            gl2.lt_exec(f"range r2 = !1; set r2 -k 2; set r2 -w {cw_u}; set r2 -d 1;")
+            gl2.lt_exec(f"range r2 = !1; set r2 -w {cw_u}; set r2 -d 1;")
+            p2.symbol_kind = 2
+            p2.symbol_interior = 1
             d_arr = np.asarray(cond_data["density_g_cm3"], dtype=float)
             d_fin = d_arr[np.isfinite(d_arr)]
             d_min_v, d_max_v = float(np.min(d_fin)), float(np.max(d_fin))
@@ -3553,8 +3567,9 @@ def build_xy_trend_opju(
             p_idx_1 = len(gl.plot_list())
             if plot_type == "y":
                 p_obj.symbol_size = mk_sz
-                p_obj.symbol_interior = 1
-                gl.lt_exec(f"range rr = !{p_idx_1}; set rr -k 2; set rr -w {cw_u};")
+                gl.lt_exec(f"range rr = !{p_idx_1}; set rr -w {cw_u};")
+                p_obj.symbol_kind = 2
+                p_obj.symbol_interior = 0
                 sw_k = "line_sphere"
             else:
                 gl.lt_exec(f"range rr = !{p_idx_1}; set rr -w {cw_u};")
@@ -3860,9 +3875,10 @@ def build_composite_opju(
                     pe = gl.add_plot(wks, coly=2, colx=1, type="y")
                     pe.color = _hex_to_origin_color(op, c_hex)
                     pe.symbol_size = float(spec["marker_size_pt"])
-                    pe.symbol_interior = 1
                     pi1 = len(gl.plot_list())
-                    gl.lt_exec(f"range rr = !{pi1}; set rr -k 2; set rr -w {cw_u};")
+                    gl.lt_exec(f"range rr = !{pi1}; set rr -w {cw_u};")
+                    pe.symbol_kind = 2
+                    pe.symbol_interior = 0
                     leg_e.append((pi1, nm, c_hex, "line_sphere"))
                     eis_wks_list.append((wks, item))
                     max_sp = max(max_sp, float(np.max(item["z_real"])), float(np.max(item["neg_z_imag"])))
@@ -4043,9 +4059,10 @@ def build_composite_opju(
                     pe = gl_c.add_plot(wks_e, coly=2, colx=1, type="y")
                     pe.color = _hex_to_origin_color(op, c_hex)
                     pe.symbol_size = 5.5
-                    pe.symbol_interior = 1
                     pi1 = len(gl_c.plot_list())
-                    gl_c.lt_exec(f"range rr = !{pi1}; set rr -k 2; set rr -w {cell_cw_u};")
+                    gl_c.lt_exec(f"range rr = !{pi1}; set rr -w {cell_cw_u};")
+                    pe.symbol_kind = 2
+                    pe.symbol_interior = 0
                     leg_c.append((pi1, ot.clean_semantic_sample_name(str(item["name"]), True), c_hex, "line_sphere"))
                     zr_a = np.asarray(item["z_real"], dtype=float)
                     nzi_a = np.asarray(item["neg_z_imag"], dtype=float)
@@ -4111,10 +4128,11 @@ def build_composite_opju(
                         c_hex_i = ot.normalize_hex(item.get("color", "#3E86DE"))
                         p_ic = gl_in_c.add_plot(wks_e, coly=2, colx=1, type="y")
                         p_ic.color = _hex_to_origin_color(op, c_hex_i)
-                        p_ic.symbol_size = 4.0
-                        p_ic.symbol_interior = 1
+                        p_ic.symbol_size = 11.0
                         ic_idx = len(gl_in_c.plot_list())
-                        gl_in_c.lt_exec(f"range ric = !{ic_idx}; set ric -k 2; set ric -w {int(round(cell_cw_u * 0.8))};")
+                        gl_in_c.lt_exec(f"range ric = !{ic_idx}; set ric -w {int(round(cell_cw_u * 2.1))};")
+                        p_ic.symbol_kind = 2
+                        p_ic.symbol_interior = 0
                     gl_in_c.set_xlim(0.0, in_lim_c)
                     gl_in_c.set_ylim(0.0, in_lim_c)
                     in_li = nyq_left_in + 0.46 * 3.08
