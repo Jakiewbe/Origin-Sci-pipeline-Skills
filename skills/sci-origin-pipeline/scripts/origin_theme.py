@@ -102,8 +102,93 @@ _PAIRED_INTERLEAVED: List[str] = [
     "#8C3B5E",
 ]
 
+# Colorblind-safe categorical palette (Okabe-Ito, high-contrast on white ordered first)
+OKABE_ITO_COLORS: List[str] = [
+    "#0072B2",
+    "#D55E00",
+    "#009E73",
+    "#CC79A7",
+    "#E69F00",
+    "#56B4E9",
+    "#222222",
+    "#F0E442",
+]
+
+# Multi-cluster categorical palette for omics / ML / single-cell (Paul Tol Muted, 10 colors)
+TOL_MUTED_COLORS: List[str] = [
+    "#332288",
+    "#88CCEE",
+    "#44AA99",
+    "#117733",
+    "#999933",
+    "#DDCC77",
+    "#CC6677",
+    "#882255",
+    "#AA4499",
+    "#6699CC",
+]
+
+# Perceptually uniform continuous scientific colormaps (8 stops each)
+VIRIDIS_STOPS: List[str] = [
+    "#440154",
+    "#46327E",
+    "#365C8D",
+    "#277F8E",
+    "#1FA187",
+    "#4AC16D",
+    "#A0DA39",
+    "#FDE725",
+]
+
+CIVIDIS_STOPS: List[str] = [
+    "#00204D",
+    "#1F3B6D",
+    "#46546C",
+    "#686B70",
+    "#8B8675",
+    "#B1A471",
+    "#D8C45C",
+    "#FFEA46",
+]
+
+BATLOW_STOPS: List[str] = [
+    "#011959",
+    "#124260",
+    "#30675D",
+    "#5E7B50",
+    "#9A8944",
+    "#D8984C",
+    "#F8B480",
+    "#FACCFA",
+]
+
+# Perceptual diverging Crameri vik (#001260 -> #EAEDE9 -> #601200)
+VIK_STOPS: List[str] = [
+    "#001260",
+    "#134B8A",
+    "#71A7C4",
+    "#EAEDE9",
+    "#D29773",
+    "#9C3B1A",
+    "#601200",
+]
+
+# Perceptually uniform sequential magma
+MAGMA_STOPS: List[str] = [
+    "#000004",
+    "#1D1147",
+    "#51127C",
+    "#832681",
+    "#B73779",
+    "#E75263",
+    "#FC8961",
+    "#FCFDBF",
+]
+
 _HEX_RE = re.compile(r"^#?(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$")
-_SAMPLE_PREFIX_RE = re.compile(r"^[A-Za-z]\s*:\s+")
+_SAMPLE_PREFIX_RE = re.compile(
+    r"^[A-F]\s*:\s+(?=(?:Sample|Pristine|Control|Discharged|CF|\d+\s*C\b))"
+)
 
 VALID_COLOR_SCHEMES = (
     "paired_semantic",
@@ -112,7 +197,39 @@ VALID_COLOR_SCHEMES = (
     "deep_blue_to_red",
     "pseudocolor_zero_white",
     "diverging_blue_white_red",
+    "okabe_ito",
+    "tol_muted",
+    "viridis",
+    "cividis",
+    "batlow",
+    "vik",
+    "magma",
 )
+
+VALID_JOURNAL_SPECS = (
+    "presentation_4_3",
+    "nature_single_89mm",
+    "nature_double_183mm",
+    "science_single_55mm",
+    "science_double_184mm",
+    "cell_single_85mm",
+    "cell_double_174mm",
+    "acs_single_3.25in",
+    "ieee_single_3.5in",
+)
+
+_JOURNAL_SPEC_ALIASES: Dict[str, str] = {
+    "default": "presentation_4_3",
+    "presentation": "presentation_4_3",
+    "nature_single": "nature_single_89mm",
+    "nature_double": "nature_double_183mm",
+    "science_single": "science_single_55mm",
+    "science_double": "science_double_184mm",
+    "cell_single": "cell_single_85mm",
+    "cell_double": "cell_double_174mm",
+    "acs_single": "acs_single_3.25in",
+    "ieee_single": "ieee_single_3.5in",
+}
 
 VALID_AXIS_KINDS = (
     "intensity_arbitrary",
@@ -379,6 +496,34 @@ def resolve_series_colors(
     if scheme == "diverging_blue_white_red":
         return interpolate_color_stops(DIVERGING_BLUE_WHITE_RED_STOPS, n)
 
+    if scheme in ("okabe_ito", "tol_muted"):
+        discrete_pool = OKABE_ITO_COLORS if scheme == "okabe_ito" else TOL_MUTED_COLORS
+        base_disc = [discrete_pool[i % len(discrete_pool)] for i in range(n)]
+        if roles is not None:
+            resolved_disc: List[str] = []
+            for idx, r_hint in enumerate(roles):
+                cls, val = _classify_semantic_role(r_hint)
+                resolved_disc.append(val if cls == "direct" and val else base_disc[idx])
+            return resolved_disc
+        return base_disc
+
+    if scheme in ("viridis", "cividis", "batlow", "vik", "magma"):
+        ramp_map = {
+            "viridis": VIRIDIS_STOPS,
+            "cividis": CIVIDIS_STOPS,
+            "batlow": BATLOW_STOPS,
+            "vik": VIK_STOPS,
+            "magma": MAGMA_STOPS,
+        }
+        base_ramp = interpolate_color_stops(ramp_map[scheme], n)
+        if roles is not None:
+            resolved_ramp: List[str] = []
+            for idx, r_hint in enumerate(roles):
+                cls, val = _classify_semantic_role(r_hint)
+                resolved_ramp.append(val if cls == "direct" and val else base_ramp[idx])
+            return resolved_ramp
+        return base_ramp
+
     if scheme == "sandwich_stack":
         base_stack = (
             list(_SANDWICH_BY_COUNT[n])
@@ -503,17 +648,152 @@ UNIFIED_SPEC: Dict[str, Any] = {
 }
 
 
+def load_journal_specs() -> Dict[str, Dict[str, Any]]:
+    """Load orthogonal journal physical print layout specifications from `presets/journal_specs.json`."""
+    spec_file = PRESET_DIR / "journal_specs.json"
+    if not spec_file.exists():
+        raise FileNotFoundError(f"Journal specs preset missing: {spec_file}")
+    raw_data: Dict[str, Any] = json.loads(spec_file.read_text(encoding="utf-8"))
+    specs = raw_data["specs"] if isinstance(raw_data.get("specs"), dict) else raw_data
+    return copy.deepcopy(specs)
+
+
+def apply_journal_spec(theme_dict: Dict[str, Any], journal_spec: Optional[str]) -> Dict[str, Any]:
+    """
+    Apply an orthogonal journal physical layout & typography spec (`nature_single_89mm`,
+    `science_single_55mm`, `cell_single_85mm`, `acs_single_3.25in`, `ieee_single_3.5in`, etc.)
+    onto `theme_dict` while strictly preserving `font_family` and `font_weight` of the style preset.
+    Returns an untouched deep copy when `journal_spec` is `None` or `'presentation_4_3'`.
+    """
+    out = copy.deepcopy(theme_dict)
+    if journal_spec is None or str(journal_spec).strip() == "":
+        return out
+
+    raw_key = str(journal_spec).strip()
+    spec_key = _JOURNAL_SPEC_ALIASES.get(raw_key.lower(), raw_key)
+    all_specs = load_journal_specs()
+    if spec_key not in all_specs:
+        raise ValueError(
+            f"Unsupported journal_spec {journal_spec!r}; expected one of {VALID_JOURNAL_SPECS}"
+        )
+
+    out["journal_spec"] = spec_key
+    js = all_specs[spec_key]
+    if spec_key == "presentation_4_3" or bool(js.get("preserve_theme_typography", False)):
+        out["_journal_spec_applied"] = spec_key
+        return out
+
+    if out.get("_journal_spec_applied") == spec_key:
+        return out
+
+    box_lw = float(js["box_lw_pt"])
+    curve_lw = float(js["curve_lw_pt"])
+    guide_lw = float(js.get("guide_lw_pt", max(0.55, round(curve_lw * 0.6, 2))))
+    inset_box_lw = float(js.get("inset_box_lw_pt", max(0.5, round(box_lw * 0.72, 2))))
+    bar_border_lw = float(js.get("bar_border_lw_pt", max(0.5, round(box_lw * 0.8, 2))))
+    axis_pt = float(js["axis_title_pt"])
+    tick_pt = float(js["tick_label_pt"])
+    leg_pt = float(js["legend_pt"])
+    callout_pt = float(js.get("callout_pt", leg_pt))
+    inset_tk_pt = float(js.get("inset_tick_pt", max(5.0, tick_pt - 1.5)))
+    inset_ttl_pt = float(js.get("inset_title_pt", max(5.5, tick_pt - 1.0)))
+    mk_pt = float(js.get("marker_size_pt", 3.5))
+    inset_mk_pt = float(js.get("inset_marker_size_pt", max(2.2, round(mk_pt * 0.7, 2))))
+
+    out.update(
+        {
+            "width_mm": float(js["width_mm"]),
+            "height_mm": float(js["height_mm"]),
+            "panel_tag_case": str(js.get("panel_tag_case", "lower_bold")),
+            "figure_box_linewidth": box_lw,
+            "inset_box_linewidth": inset_box_lw,
+            "curve_linewidth": curve_lw,
+            "guide_linewidth": guide_lw,
+            "callout_leader_linewidth": guide_lw,
+            "axis_label_size": axis_pt,
+            "tick_label_size": tick_pt,
+            "title_annot_size": leg_pt,
+            "callout_font_size": callout_pt,
+            "bar_value_label_size": callout_pt,
+            "tick_width": box_lw,
+            "major_tick_length": max(2.4, round(box_lw * 3.6, 2)),
+            "log_minor_tick_length": max(1.5, round(box_lw * 2.2, 2)),
+        }
+    )
+
+    on = out.setdefault("origin_native", {})
+    on.update(
+        {
+            "page_rect_w_in": float(js["page_rect_w_in"]),
+            "page_rect_h_in": float(js["page_rect_h_in"]),
+            "box_rect_left_in": float(js["box_rect_left_in"]),
+            "box_rect_top_in": float(js["box_rect_top_in"]),
+            "box_rect_w_in": float(js["box_rect_w_in"]),
+            "box_rect_h_in": float(js["box_rect_h_in"]),
+            "page_sq_w_in": float(js["page_sq_w_in"]),
+            "page_sq_h_in": float(js["page_sq_h_in"]),
+            "box_sq_left_in": float(js["box_sq_left_in"]),
+            "box_sq_top_in": float(js["box_sq_top_in"]),
+            "box_sq_side_in": float(js["box_sq_side_in"]),
+            "equal_aspect_square_inch": float(js["box_sq_side_in"]),
+            "box_linewidth_pt": box_lw,
+            "inset_box_linewidth_pt": inset_box_lw,
+            "bar_border_linewidth_pt": bar_border_lw,
+            "axis_title_pt": axis_pt,
+            "dual_y_axis_title_pt": axis_pt,
+            "tick_label_pt": tick_pt,
+            "legend_pt": leg_pt,
+            "value_label_pt": callout_pt,
+            "inset_tick_label_pt": inset_tk_pt,
+            "inset_title_pt": inset_ttl_pt,
+            "curve_w": int(round(curve_lw * 500.0)),
+            "fit_envelope_w": int(round(curve_lw * 500.0)),
+            "component_w": int(round(guide_lw * 500.0)),
+            "baseline_w": int(round(guide_lw * 460.0)),
+            "guide_w": int(round(guide_lw * 500.0)),
+            "marker_size_pt": mk_pt,
+            "inset_marker_size_pt": inset_mk_pt,
+        }
+    )
+
+    if isinstance(out.get("axis_tick_matrix"), dict):
+        for ak, apol in out["axis_tick_matrix"].items():
+            if isinstance(apol, dict):
+                apol["box_linewidth_pt"] = inset_box_lw if ak == "inset" else box_lw
+
+    if isinstance(out.get("bar_style"), dict) and isinstance(out["bar_style"].get("grouped_gradient"), dict):
+        gg = out["bar_style"]["grouped_gradient"]
+        gg["edge_linewidth_pt"] = bar_border_lw
+        gg["value_label_size_pt"] = callout_pt
+        gg["dense_value_label_size_pt"] = max(5.0, round(callout_pt - 1.0, 2))
+        gg["error_bar_linewidth_pt"] = guide_lw
+
+    if isinstance(out.get("composite_print_profile"), dict):
+        cpp = out["composite_print_profile"]
+        cpp["panel_tag_pt"] = float(js.get("panel_tag_pt", axis_pt + 0.5))
+        cpp["axis_title_pt"] = axis_pt
+        cpp["tick_label_pt"] = tick_pt
+        cpp["legend_pt"] = leg_pt
+        cpp["box_linewidth_pt"] = box_lw
+        cpp["curve_linewidth_pt"] = curve_lw
+
+    out["_journal_spec_applied"] = spec_key
+    return out
+
+
 def resolve_runtime_spec(theme_or_name: Optional[Dict[str, Any] | str | Path] = None) -> Dict[str, Any]:
     """
     Resolve a complete runtime layout/typography/stroke specification dictionary from either:
       - `None` -> `style_publication_minimal` (Times New Roman Bold, 3.0pt box, 3.0pt curves, 28/24/22/22 pt)
       - `"style_arial_clean"` / `"arial"` -> Arial Regular, 1.5pt box, 2.0pt curves, 28/24/22/22 pt
-      - Any loaded theme dictionary from `load_theme(...)`
+      - Any loaded theme dictionary from `load_theme(...)` (honoring `th.get("journal_spec")` if present)
     """
     spec = copy.deepcopy(UNIFIED_SPEC)
     if theme_or_name is None:
         return spec
     th = theme_or_name if isinstance(theme_or_name, dict) else load_theme(theme_or_name)
+    if th.get("journal_spec"):
+        th = apply_journal_spec(th, th.get("journal_spec"))
     on = th.get("origin_native") or {}
 
     fam = str(th.get("font_family") or spec["font_family"]).strip()
@@ -522,13 +802,19 @@ def resolve_runtime_spec(theme_or_name: Optional[Dict[str, Any] | str | Path] = 
     box_lw = float(th.get("figure_box_linewidth", on.get("box_linewidth_pt", spec["box_lw_pt"])))
     curve_lw = float(th.get("curve_linewidth", spec["curve_lw_pt"]))
     curve_w = int(round(float(on.get("curve_w", curve_lw * 500.0))))
-    sub_lw = float(th.get("guide_linewidth", max(1.1, round(curve_lw * 0.56, 2))))
+    sub_lw = float(th.get("guide_linewidth", max(0.55, round(curve_lw * 0.56, 2))))
     sub_w = int(round(float(on.get("component_w", sub_lw * 500.0))))
-    inset_lw = float(th.get("inset_box_linewidth", on.get("inset_box_linewidth_pt", max(1.0, round(box_lw * 0.67, 2)))))
+    inset_lw = float(th.get("inset_box_linewidth", on.get("inset_box_linewidth_pt", max(0.5, round(box_lw * 0.67, 2)))))
+    page_rect_h = float(on.get("page_rect_h_in", spec["page_rect_h_in"]))
+    box_rect_top = float(on.get("box_rect_top_in", spec["box_rect_top_in"]))
+    box_rect_h = float(on.get("box_rect_h_in", spec["box_rect_h_in"]))
+    sy_scale = page_rect_h / 7.80
 
     spec.update(
         {
             "preset_id": str(th.get("preset_id") or DEFAULT_STYLE_PRESET),
+            "journal_spec": th.get("journal_spec"),
+            "panel_tag_case": str(th.get("panel_tag_case") or "lower_bold"),
             "font_family": fam,
             "bold": is_bold,
             "bold_int": 1 if is_bold else 0,
@@ -544,18 +830,23 @@ def resolve_runtime_spec(theme_or_name: Optional[Dict[str, Any] | str | Path] = 
             "legend_pt": float(th.get("title_annot_size", on.get("legend_pt", spec["legend_pt"]))),
             "callout_pt": float(th.get("callout_font_size", on.get("value_label_pt", spec["callout_pt"]))),
             "inset_tick_pt": float(on.get("inset_tick_label_pt", spec["inset_tick_pt"])),
+            "inset_title_pt": float(on.get("inset_title_pt", spec["inset_title_pt"])),
             "page_rect_w_in": float(on.get("page_rect_w_in", spec["page_rect_w_in"])),
-            "page_rect_h_in": float(on.get("page_rect_h_in", spec["page_rect_h_in"])),
+            "page_rect_h_in": page_rect_h,
             "box_rect_left_in": float(on.get("box_rect_left_in", spec["box_rect_left_in"])),
-            "box_rect_top_in": float(on.get("box_rect_top_in", spec["box_rect_top_in"])),
+            "box_rect_top_in": box_rect_top,
             "box_rect_w_in": float(on.get("box_rect_w_in", spec["box_rect_w_in"])),
-            "box_rect_h_in": float(on.get("box_rect_h_in", spec["box_rect_h_in"])),
+            "box_rect_h_in": box_rect_h,
             "page_sq_w_in": float(on.get("page_sq_w_in", spec["page_sq_w_in"])),
             "page_sq_h_in": float(on.get("page_sq_h_in", spec["page_sq_h_in"])),
             "box_sq_left_in": float(on.get("box_sq_left_in", spec["box_sq_left_in"])),
             "box_sq_top_in": float(on.get("box_sq_top_in", spec["box_sq_top_in"])),
             "box_sq_side_in": float(on.get("box_sq_side_in", spec["box_sq_side_in"])),
+            "bode_top_in": box_rect_top,
+            "bode_gap_in": round(0.36 * sy_scale, 4),
+            "bode_sub_h_in": round(0.5 * max(0.4, box_rect_h - 0.36 * sy_scale), 4),
             "marker_size_pt": float(on.get("marker_size_pt", spec["marker_size_pt"])),
+            "inset_marker_size_pt": float(on.get("inset_marker_size_pt", spec["inset_marker_size_pt"])),
         }
     )
     return spec
@@ -945,6 +1236,43 @@ def resolve_axis_tick_policy(
     }
 
 
+def get_scheme_color_stops(scheme: str) -> List[str]:
+    """Return canonical hex stop/palette list for any supported color scheme name."""
+    key = str(scheme or "paired_semantic").strip().lower()
+    scheme_map: Dict[str, List[str]] = {
+        "paired_semantic": list(_PAIRED_INTERLEAVED),
+        "sandwich_stack": list(SANDWICH_STACK_ORDERED),
+        "sequential_blue_red": list(SEQUENTIAL_BLUE_RED_STOPS),
+        "deep_blue_to_red": list(DEEP_BLUE_TO_RED_STOPS),
+        "pseudocolor_zero_white": list(PSEUDOCOLOR_ZERO_WHITE_STOPS),
+        "diverging_blue_white_red": list(DIVERGING_BLUE_WHITE_RED_STOPS),
+        "okabe_ito": list(OKABE_ITO_COLORS),
+        "tol_muted": list(TOL_MUTED_COLORS),
+        "viridis": list(VIRIDIS_STOPS),
+        "cividis": list(CIVIDIS_STOPS),
+        "batlow": list(BATLOW_STOPS),
+        "vik": list(VIK_STOPS),
+        "magma": list(MAGMA_STOPS),
+    }
+    if key not in scheme_map:
+        raise ValueError(f"Unsupported color scheme {scheme!r}; expected one of {VALID_COLOR_SCHEMES}")
+    return scheme_map[key]
+
+
+def _pack_riff_pal_256_bytes(rgbs_256: Sequence[Tuple[int, int, int]]) -> bytes:
+    """Build standard 1052-byte Microsoft/OriginPro 256-entry RIFF `.pal` binary payload."""
+    if len(rgbs_256) != 256:
+        raise ValueError(f"RIFF .pal requires 256 RGB slots, got {len(rgbs_256)}")
+    entries = b"".join(
+        struct.pack("<BBBB", max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)), 0)
+        for r, g, b in rgbs_256
+    )
+    trailing_pad = b"\x00\x00\x00\x00"
+    data_payload = struct.pack("<HH", 0x0300, 256) + entries + trailing_pad  # 4 + 1024 + 4 = 1032B
+    data_chunk = struct.pack("<4sI", b"data", len(data_payload)) + data_payload  # 8 + 1032 = 1040B
+    return struct.pack("<4sI4s", b"RIFF", 4 + len(data_chunk), b"PAL ") + data_chunk  # 12 + 1040 = 1052B
+
+
 def _pack_riff_pal_256(rgbs_256: Sequence[Tuple[int, int, int]], out_path: str | Path) -> str:
     """
     Write a standard 1052-byte Microsoft/OriginPro 256-entry RIFF `.pal` binary file:
@@ -954,50 +1282,100 @@ def _pack_riff_pal_256(rgbs_256: Sequence[Tuple[int, int, int]], out_path: str |
       - 4B LOGPALETTE trailing struct pad: b'\\x00\\x00\\x00\\x00'
       Total = 12 + 12 + 1024 + 4 = 1052 bytes (matches OriginPro native Palettes/*.PAL).
     """
-    if len(rgbs_256) != 256:
-        raise ValueError(f"RIFF .pal requires 256 RGB slots, got {len(rgbs_256)}")
+    riff_bytes = _pack_riff_pal_256_bytes(rgbs_256)
     p = Path(out_path).resolve()
     p.parent.mkdir(parents=True, exist_ok=True)
-
-    entries = b"".join(
-        struct.pack("<BBBB", max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)), 0)
-        for r, g, b in rgbs_256
-    )
-    trailing_pad = b"\x00\x00\x00\x00"
-    data_payload = struct.pack("<HH", 0x0300, 256) + entries + trailing_pad  # 4 + 1024 + 4 = 1032B
-    data_chunk = struct.pack("<4sI", b"data", len(data_payload)) + data_payload  # 8 + 1032 = 1040B
-    riff_bytes = struct.pack("<4sI4s", b"RIFF", 4 + len(data_chunk), b"PAL ") + data_chunk  # 12 + 1040 = 1052B
     p.write_bytes(riff_bytes)
     return str(p)
 
 
-def write_discrete_riff_pal(path: str | Path, hex_list: Sequence[str]) -> str:
+def build_riff_palette_bytes(
+    hex_stops_or_scheme: Sequence[str] | str,
+    *,
+    continuous: Optional[bool] = None,
+    n_colors: int = 256,
+) -> bytes:
+    """
+    Build 1052-byte OriginPro RIFF `.pal` bytes from either a color scheme name
+    ('viridis', 'cividis', 'batlow', 'okabe_ito', 'tol_muted', etc.) or a list of hex colors.
+    """
+    if isinstance(hex_stops_or_scheme, str):
+        scheme_key = hex_stops_or_scheme.strip().lower()
+        stops = get_scheme_color_stops(scheme_key)
+        if continuous is None:
+            continuous = scheme_key not in ("okabe_ito", "tol_muted", "paired_semantic", "sandwich_stack")
+    else:
+        stops = list(hex_stops_or_scheme)
+        if continuous is None:
+            continuous = True
+
+    if not stops:
+        raise ValueError("Palette stops cannot be empty.")
+
+    if not continuous:
+        parsed = [parse_hex_rgb(c) for c in stops]
+        rgbs_256 = [parsed[i % len(parsed)] for i in range(256)]
+        return _pack_riff_pal_256_bytes(rgbs_256)
+
+    if len(stops) < 2:
+        raise ValueError("Continuous RIFF .pal requires at least 2 color stops.")
+    if n_colors < 2 or n_colors > 256:
+        raise ValueError(f"n_colors must be in [2, 256], got {n_colors}")
+
+    ramp_hex = interpolate_color_stops(stops, n_colors)
+    ramp_rgb = [parse_hex_rgb(c) for c in ramp_hex]
+    if n_colors == 256:
+        rgbs_256 = ramp_rgb
+    else:
+        rgbs_256 = [ramp_rgb[min(n_colors - 1, (i * n_colors) // 256)] for i in range(256)]
+    return _pack_riff_pal_256_bytes(rgbs_256)
+
+
+def write_origin_pal_file(
+    path: str | Path,
+    hex_stops_or_scheme: Sequence[str] | str,
+    *,
+    continuous: Optional[bool] = None,
+    n_colors: int = 256,
+) -> str:
+    """Write a 1052-byte OriginPro `.pal` file from a scheme name or hex color sequence."""
+    payload = build_riff_palette_bytes(hex_stops_or_scheme, continuous=continuous, n_colors=n_colors)
+    p = Path(path).resolve()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(payload)
+    return str(p)
+
+
+def write_discrete_riff_pal(path: str | Path, hex_list: Sequence[str] | str) -> str:
     """
     Generate a 1052-byte discrete Microsoft RIFF `.pal` cycling `hex_list` across 256 slots
     for Origin `STACKCOLUMN` / `StackColP` / `COLUMN` (`plot1.colorlist` with `stretchpal=0`).
     """
-    if not hex_list:
+    stops = get_scheme_color_stops(hex_list) if isinstance(hex_list, str) else list(hex_list)
+    if not stops:
         raise ValueError("hex_list must contain at least one color.")
-    parsed = [parse_hex_rgb(c) for c in hex_list]
+    parsed = [parse_hex_rgb(c) for c in stops]
     rgbs_256 = [parsed[i % len(parsed)] for i in range(256)]
     return _pack_riff_pal_256(rgbs_256, path)
 
 
 def write_continuous_riff_pal(
     path: str | Path,
-    hex_stops: Sequence[str],
+    hex_stops: Sequence[str] | str,
     n_colors: int = 256,
 ) -> str:
     """
     Generate a 1052-byte continuous (or `n_colors`-quantized) Microsoft RIFF `.pal`
-    interpolated across `hex_stops` for Origin 2D `CONTOUR` / `HeatMap` (`p.colormap`).
+    interpolated across `hex_stops` (or a named scheme like 'viridis'/'cividis'/'batlow')
+    for Origin 2D `CONTOUR` / `HeatMap` (`p.colormap`).
     """
-    if not hex_stops or len(hex_stops) < 2:
+    stops = get_scheme_color_stops(hex_stops) if isinstance(hex_stops, str) else list(hex_stops)
+    if not stops or len(stops) < 2:
         raise ValueError("hex_stops must contain at least 2 color stops for continuous interpolation.")
     if n_colors < 2 or n_colors > 256:
         raise ValueError(f"n_colors must be in [2, 256], got {n_colors}")
 
-    ramp_hex = interpolate_color_stops(hex_stops, n_colors)
+    ramp_hex = interpolate_color_stops(stops, n_colors)
     ramp_rgb = [parse_hex_rgb(c) for c in ramp_hex]
     if n_colors == 256:
         rgbs_256 = ramp_rgb
@@ -1051,17 +1429,25 @@ _FILE_EXT_RE = re.compile(
     re.IGNORECASE,
 )
 
-def clean_semantic_sample_name(name: str, enabled: bool = True) -> str:
+def clean_semantic_sample_name(
+    name: str,
+    strip_prefix: bool = False,
+    *,
+    enabled: bool = True,
+) -> str:
     """
-    Strip redundant 'A: ' / 'B: ' sample prefixes and trailing file extension
-    suffixes like (.ndax) / (.nda) / (.bin) / (.mpt) / (.dta) while preserving
-    semantic names.
+    Strip trailing file extension suffixes like (.ndax) / (.nda) / (.bin) / (.mpt) / (.dta)
+    while preserving scientific colon notation ('B:T Ratio', 'G1: S', 'WT:KO', 'p: 0.01',
+    '1:10 Dilution'). Legacy slot prefixes ('A: Sample 1') are stripped ONLY when
+    `strip_prefix=True` and matched by `_SAMPLE_PREFIX_RE`.
     """
     text = str(name or "").strip()
     if not enabled:
         return text
     text = _FILE_EXT_RE.sub("", text)
-    return _SAMPLE_PREFIX_RE.sub("", text)
+    if strip_prefix:
+        text = _SAMPLE_PREFIX_RE.sub("", text)
+    return text
 
 
 def format_generic_sample_labels(count: int, prefix: str = "Sample") -> List[str]:

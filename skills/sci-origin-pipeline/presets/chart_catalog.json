@@ -1,31 +1,45 @@
 {
-  "catalog_version": "2.0.0",
-  "engine": "OriginPro Native (.opju + expGraph) & Declarative Chart Grammar",
+  "catalog_version": "4.0.0",
+  "engine": "OriginPro Native (.opju + expGraph) & Cross-Discipline Declarative Chart Grammar",
   "default_style_preset": "style_publication_minimal",
+  "journal_layout_specs": [
+    "presentation_4_3",
+    "nature_single_89mm",
+    "nature_double_183mm",
+    "science_single_55mm",
+    "science_double_184mm",
+    "cell_single_85mm",
+    "cell_double_174mm",
+    "acs_single_3.25in",
+    "ieee_single_3.5in"
+  ],
   "design_principles": {
-    "box_and_typography": "3.0pt closed 4-side frame (1.6pt for insets, 1.8-2.2pt for multi-panel grids), bold Times New Roman throughout, native Origin XB/YL/YR GraphObjects.",
+    "box_and_typography": "3.0pt closed 4-side frame (1.6pt for insets, 1.8-2.2pt for multi-panel grids), bold Times New Roman or clean Arial Regular preset, native Origin XB/YL/YR GraphObjects.",
     "minimal_tick_matrix": {
       "intensity_arbitrary": "Left-Y ticks & numbers OFF; bottom-X inward major ticks ON; top/right ticks OFF.",
-      "categorical": "Bottom-X tick lines OFF (semantic sample labels ON, no 'A:' prefix); left-Y inward major ticks ON.",
+      "categorical": "Bottom-X tick lines OFF (semantic sample labels ON, scientific colons preserved); left-Y inward major ticks ON.",
       "quantitative": "Bottom-X & left-Y inward major ticks ON; minor ticks OFF except when scale == 'log10'.",
       "dual_y_left_and_right": "Left-Y & right-Y inward major ticks ON, minor ticks OFF; Layer 1 sets y.showAxes=1; right-Y spine/ticks/YR bound to right-axis semantic color; zero baseline aligned.",
       "inset": "1.6pt frame, opaque #FFFFFF fill, parent-layer percentage bbox (Origin layer.unit=7), <=4 sparse inward major ticks, redundant axis titles omitted."
     },
     "semantic_color_system": {
       "paired_semantic": "Control/baseline uses paired blues (#3E86DE, #C5DBF5, #6579BE); pulse/treatment uses paired reds (#D84B5C, #A02333, #E8A3AF).",
+      "okabe_ito": "8 discrete colorblind-safe high-contrast categorical colors (#0072B2, #D55E00, #009E73, #CC79A7, #E69F00, #56B4E9, #222222, #F0E442).",
+      "tol_muted": "10 discrete balanced colors for multi-cluster omics/ML (#332288, #88CCEE, #44AA99, #117733, #999933, #DDCC77, #CC6677, #882255, #AA4499, #6699CC).",
+      "perceptual_continuous": "Perceptually uniform continuous & diverging ramps ('viridis', 'cividis', 'batlow', 'vik', 'magma') wired into both series interpolation and 1052-byte RIFF .pal colormaps.",
       "sandwich_stack": "Stacked columns use flat solid fills + 0.8pt #FFFFFF dividers (never per-segment gradients): bottom inert (#D8DEE9, #C5DBF5) -> middle conventional (#6579BE, #3E86DE) -> top active (#E8A3AF, #D84B5C, #A02333).",
-      "sequential_blue_red": ">5 ordered physical curves interpolate across #2B6CB0 -> #3E86DE -> #6579BE -> #E8A3AF -> #D84B5C -> #A02333 (deep_blue_to_red: #08306B -> #2171B5 -> #4292C6 -> #9ECAE1 -> #FCBBA1 -> #EF3B2C -> #A02333 for >=8 high-rate clusters).",
+      "sequential_blue_red": ">5 ordered physical curves interpolate across #2B6CB0 -> #3E86DE -> #6579BE -> #E8A3AF -> #D84B5C -> #A02333 (deep_blue_to_red for >=8 high-rate clusters).",
       "pseudocolor_zero_white": "2D intensity/DRT maps force zero background to pure white #FFFFFF -> #C5DBF5 -> #6579BE -> #D84B5C -> #A02333 via 1052-byte RIFF .pal."
     }
   },
   "grammar_dataclasses": {
-    "FigureSpec": ["title", "mode", "subtype", "style_preset", "nrows", "ncols", "width_ratios", "height_ratios", "width_mm", "height_mm", "panels", "output_dir", "build_opju", "template_override", "summary_metrics"],
-    "PanelSpec": ["panel_id", "tag", "row", "col", "row_span", "col_span", "x_axis", "y1_axis", "y2_axis", "z_axis", "layers", "insets", "guides", "equal_aspect", "align_zero", "legend_style", "box_linewidth_pt", "share_x_with", "share_y_with"],
+    "FigureSpec": ["title", "mode", "subtype", "style_preset", "journal_spec", "nrows", "ncols", "width_ratios", "height_ratios", "width_mm", "height_mm", "panels", "output_dir", "build_opju", "template_override", "summary_metrics", "audit_notes", "meta"],
+    "PanelSpec": ["panel_id", "tag", "row", "col", "row_span", "col_span", "coord", "x_axis", "y1_axis", "y2_axis", "z_axis", "layers", "insets", "guides", "equal_aspect", "align_zero", "legend_style", "box_linewidth_pt", "share_x_with", "share_y_with", "meta"],
     "LayerSpec": ["layer_id", "mark", "y_axis", "series", "categories", "color_scheme", "palette_colors", "normalize_100", "divider_color", "divider_linewidth_pt", "edge_color", "edge_linewidth_pt", "show_value_labels", "value_label_size_pt", "origin_template", "origin_plot_type"],
-    "SeriesSpec": ["name", "x", "y", "y_err", "y_low", "y_high", "matrix_x", "matrix_y", "matrix_z", "role", "color", "gradient_top_color", "gradient_bottom_color", "label_color", "line_style", "line_width_pt", "marker_style", "marker_size_pt", "source_ref"],
-    "AxisSpec": ["which", "label", "unit", "axis_kind", "scale", "limits", "invert", "categories", "color", "align_zero", "origin_rich_label", "tick_policy"],
+    "SeriesSpec": ["name", "x", "y", "y_err", "y_low", "y_high", "matrix_x", "matrix_y", "matrix_z", "role", "color", "gradient_top_color", "gradient_bottom_color", "label_color", "line_style", "line_width_pt", "marker_style", "marker_size_pt", "source_ref", "meta"],
+    "AxisSpec": ["which", "label", "unit", "axis_kind", "scale", "limits", "invert", "categories", "color", "align_zero", "major_step", "origin_rich_label", "tick_policy", "breaks", "linked_top"],
     "InsetSpec": ["inset_id", "mode", "bbox_pct", "xlim", "ylim", "equal_aspect", "show_zoom_box", "zoom_box_color", "background_color", "box_linewidth_pt", "x_axis", "y_axis", "layers"],
-    "GuideSpec": ["kind", "axis", "value", "start", "end", "anchor_pos", "label", "color", "line_style", "line_width_pt", "shoulder_y_frac"]
+    "GuideSpec": ["kind", "axis", "value", "start", "end", "anchor_pos", "x", "x2", "y", "tip_drop", "label", "color", "line_style", "line_width_pt", "shoulder_y_frac", "meta"]
   },
   "modes": [
     {
@@ -241,6 +255,162 @@
       },
       "required_fields": ["mode", "output_dir", "series"],
       "optional_fields": ["color_scheme", "center_zero", "show_value_labels", "value_format", "x_label", "y_label"]
+    },
+    {
+      "mode": "stat_bar_dot_sig",
+      "category": "Biomed_Statistical_Comparison",
+      "summary": "Publication mean±SD/SEM column bars overlaid with jittered individual replicate dots and auto-computed omnibus/post-hoc significance brackets (*, **, ***, ****).",
+      "origin_native_recipe": {
+        "bars_and_dots": "mark='bar_dot_error' -> column bars + YErr (plot:=203) + overlaid jittered 2D circle scatter (plot:=201, symbol_kind=2).",
+        "brackets": "GuideSpec(kind='sig_bracket', x=x1, x2=x2, value=y_bar, tip_drop=tip_drop, label=stars) with automatic top-frame headroom."
+      },
+      "required_fields": ["mode", "output_dir"],
+      "optional_fields": ["groups", "series", "error_bar", "paired", "control_group", "p_adjust", "pairs", "hide_ns", "max_brackets", "color_scheme", "y_label", "locale"]
+    },
+    {
+      "mode": "stat_violin_raincloud",
+      "category": "Biomed_Statistical_Distribution",
+      "summary": "Multi-group native OriginPro Violin + quartile box distribution with Okabe-Ito colorblind-safe palette and auto-computed significance brackets.",
+      "origin_native_recipe": {
+        "violin": "mark='violin_box', template='Violin' / plot:=206, color_scheme='okabe_ito' default.",
+        "brackets": "Optional GuideSpec(kind='sig_bracket') from stat_engine.run_group_comparisons."
+      },
+      "required_fields": ["mode", "output_dir"],
+      "optional_fields": ["groups", "series", "subtype", "color_scheme", "show_stats", "p_adjust", "control_group", "pairs", "hide_ns", "x_label", "y_label", "locale"]
+    },
+    {
+      "mode": "volcano_plot",
+      "category": "Omics_Differential_Expression",
+      "summary": "Differential expression / proteomics Volcano plot (log2FC vs -log10 p/FDR) partitioned into Down (#2B6CB0), NS (#B8C2CC), and Up (#D84B5C) with dashed cutoff lines and top-hit leader callouts.",
+      "origin_native_recipe": {
+        "scatter": "LayerSpec(mark='scatter') with 3 SeriesSpec ('Down', 'NS', 'Up'), semi-transparent 2D circles.",
+        "thresholds_and_callouts": "vline at ±fc_cutoff, hline at -log10(p_cutoff), and panel.meta['point_callouts'] leader labels."
+      },
+      "required_fields": ["mode", "output_dir", "log2fc"],
+      "optional_fields": ["pval", "neg_log10_p", "genes", "labels", "fc_cutoff", "p_cutoff", "top_n_labels", "highlight_genes", "x_label", "y_label", "locale"]
+    },
+    {
+      "mode": "forest_ablation_plot",
+      "category": "Clinical_Meta_and_ML_Ablation",
+      "summary": "Horizontal Forest / ML Ablation 95% confidence interval plot with inverted categorical Y axis (top-to-bottom), vertical null reference line, and formatted CI strings.",
+      "origin_native_recipe": {
+        "forest": "LayerSpec(mark='forest_ci') with horizontal [ci_low, ci_high] capped segments + 2D circle point estimates, y1_axis categorical inverted (1..K), dashed vline at null_value."
+      },
+      "required_fields": ["mode", "output_dir", "items"],
+      "optional_fields": ["null_value", "x_label", "y_label", "x_scale", "color_scheme", "value_format", "show_ci_text", "locale"]
+    },
+    {
+      "mode": "free_energy_diagram",
+      "category": "Chemistry_Catalysis_Thermodynamics",
+      "summary": "Multi-pathway DFT / electrocatalysis reaction free-energy step profile (ΔG vs reaction coordinate) with thick horizontal energy plateaus and dashed inter-step connectors.",
+      "origin_native_recipe": {
+        "steps": "LayerSpec(mark='energy_step') rendering [i-0.28, i+0.28] solid thick plateaus + [i+0.28, i+0.72] thin dashed connectors across categorical X step_labels."
+      },
+      "required_fields": ["mode", "output_dir", "pathways"],
+      "optional_fields": ["step_labels", "rds_highlight", "plateau_half_width", "color_scheme", "x_label", "y_label", "locale"]
+    },
+    {
+      "mode": "dose_response_4pl",
+      "category": "Pharmacology_Biochemistry_Fitting",
+      "summary": "Single- or multi-compound 4-parameter logistic (4PL) dose-response sigmoid curves on log10 concentration axis with 95% CI bands and IC50 dashed drop-lines.",
+      "origin_native_recipe": {
+        "fit_band": "LayerSpec(mark='line_band') per-compound scatter + smooth 4PL curve + type=9 95% CI band, log10 X axis, and IC50 hline/vline guides."
+      },
+      "required_fields": ["mode", "output_dir"],
+      "optional_fields": ["series", "x", "y", "n_grid", "ci_level", "color_scheme", "show_ic50_guides", "x_label", "y_label", "locale"]
+    },
+    {
+      "mode": "kaplan_meier_plot",
+      "category": "Biomed_Clinical_Survival",
+      "summary": "Kaplan-Meier survival curves with Greenwood cloglog 95% CI step bands, vertical right-censor ticks, Mantel-Cox Log-Rank p / Hazard Ratio summary, and tick-aligned Number-at-risk table.",
+      "origin_native_recipe": {
+        "step_curve": "LayerSpec(mark='km_step', plot:=200) with set rr -l 11 (Step-Horz) on main survival + type=9 CI bounds + -k 19 vertical censor ticks.",
+        "at_risk_table": "Compacted main frame + 1:1 X-tick-aligned Number-at-risk page overlay rows below XB."
+      },
+      "required_fields": ["mode", "output_dir", "groups"],
+      "optional_fields": ["risk_times", "show_ci", "show_censor", "show_risk_table", "y_scale_pct", "x_label", "y_label", "color_scheme", "journal_spec", "locale"]
+    },
+    {
+      "mode": "roc_pr_curve",
+      "category": "ML_Clinical_Diagnostic_Evaluation",
+      "summary": "Multi-model Receiver Operating Characteristic (AUROC ± Hanley-McNeil 95% CI + Youden optimal operating cutoff) or Precision-Recall (AUPRC + prevalence baseline) curves.",
+      "origin_native_recipe": {
+        "curves": "LayerSpec(mark='line_scatter') with AUROC/AUPRC legend labels, dashed diagonal chance / baseline reference, and open-circle optimal cutoff marker."
+      },
+      "required_fields": ["mode", "output_dir", "models"],
+      "optional_fields": ["curve_kind", "show_optimal_point", "conf_level", "color_scheme", "journal_spec", "locale"]
+    },
+    {
+      "mode": "nmr_spectrum",
+      "category": "Chemistry_Structural_Spectroscopy",
+      "summary": "1H / 13C / heteronuclear NMR chemical-shift spectrum (inverted ppm X axis, arbitrary-intensity Y axis) with elevated step-integral curves (0.42..0.78 peak headroom) and multiplet peak tags.",
+      "origin_native_recipe": {
+        "spectrum_and_integrals": "Inverted quantitative ppm X axis + intensity_arbitrary Y axis + step-integral SeriesSpec curves + multiplet peak_tag / integral label callouts."
+      },
+      "required_fields": ["mode", "output_dir", "series"],
+      "optional_fields": ["peaks", "integrals", "x_label", "y_label", "x_limits", "journal_spec", "locale"]
+    },
+    {
+      "mode": "broken_axis_plot",
+      "category": "Multi_Regime_Broken_Scale",
+      "summary": "Line/scatter or grouped-bar chart with native OriginPro broken X and/or Y axes (AxisSpec.breaks) for bimodal time/concentration/outlier regimes.",
+      "origin_native_recipe": {
+        "axis_breaks": "layer.x.breaks.enable=1; layer.x.break1.from/to/position/inc1/inc2/scale2 (and/or layer.y.breaks)."
+      },
+      "required_fields": ["mode", "output_dir", "series"],
+      "optional_fields": ["x_breaks", "y_breaks", "geom", "categories", "x_label", "y_label", "x_limits", "y_limits", "journal_spec", "locale"]
+    },
+    {
+      "mode": "dual_x_optical_spectrum",
+      "category": "Physics_Optics_Spectroscopy",
+      "summary": "Optical / photonic / Arrhenius spectrum with nonlinear formula-linked top X axis (e.g. bottom Wavelength nm <-> top Photon Energy eV via 1239.84193/x, or Temperature K <-> 1000/T).",
+      "origin_native_recipe": {
+        "linked_top_x": "layadd userdef:=1 top:=1 linkto:=1 xaxis:=custom x1:=<formula(X1)> x2:=<formula(X2)> + native XT title."
+      },
+      "required_fields": ["mode", "output_dir", "series"],
+      "optional_fields": ["linked_top_x", "x_label", "y_label", "x_limits", "y_limits", "color_scheme", "journal_spec", "locale"]
+    },
+    {
+      "mode": "ternary_diagram",
+      "category": "Materials_Geoscience_Phase_Diagram",
+      "summary": "Three-component normalized (A + B + C = 100%) ternary phase / compositional diagram with custom edge/vertex titles and 2D circle markers or tie-lines.",
+      "origin_native_recipe": {
+        "ternary": "PanelSpec(coord='ternary') + template='Ternary' + wks.cols_axis('XYZ') + plot:=245."
+      },
+      "required_fields": ["mode", "output_dir", "series"],
+      "optional_fields": ["component_labels", "color_scheme", "journal_spec", "locale"]
+    },
+    {
+      "mode": "polar_radar_plot",
+      "category": "Physics_Anisotropy_and_ML_Benchmark",
+      "summary": "Angular radiation/anisotropy polar plot (subtype='polar', 0..360 deg) or multi-spoke benchmark radar chart (subtype='radar', >=3 spoke categories).",
+      "subtypes": ["polar", "radar"],
+      "origin_native_recipe": {
+        "polar": "PanelSpec(coord='polar') + template='Polar' (BBUTN1 stripped) + plot:=192.",
+        "radar": "PanelSpec(coord='radar') -> equal-aspect Cartesian concentric N-gon web + closed polygon spokes."
+      },
+      "required_fields": ["mode", "output_dir", "series"],
+      "optional_fields": ["subtype", "categories", "angle_unit", "r_limits", "fill_alpha", "color_scheme", "journal_spec", "locale"]
+    },
+    {
+      "mode": "multi_track_profile",
+      "category": "Earth_Ocean_Stratigraphic_Logs",
+      "summary": "Synchronized K-track vertical borehole / CTD ocean / paleoclimate depth or age profile sharing an inverted Y axis with cross-track shaded horizon bands.",
+      "origin_native_recipe": {
+        "multi_track": "1xK side-by-side linked layers sharing (d_min, d_max) Y axis, Y labels on Track 1 only, max 3 X ticks per track, cross-track horizon bands."
+      },
+      "required_fields": ["mode", "output_dir", "tracks"],
+      "optional_fields": ["depth_label", "depth_invert", "depth_limits", "horizons", "color_scheme", "journal_spec", "locale"]
+    },
+    {
+      "mode": "vector_quiver_field",
+      "category": "Fluid_EM_Mechanics_2D_Vector",
+      "summary": "2D spatial vector quiver field (x, y, u, v) overlaid on an optional 2D scalar pseudocolor contour map (or auto-computed velocity magnitude field).",
+      "origin_native_recipe": {
+        "quiver": "Optional contour_pseudocolor MSheet (plot:=226) + XYXY vector worksheet plotted via plot:=218 (VECTXYXY)."
+      },
+      "required_fields": ["mode", "output_dir", "x", "y"],
+      "optional_fields": ["u", "v", "x_end", "y_end", "arrow_scale", "compute_magnitude_bg", "matrix_x", "matrix_y", "matrix_z", "color_scheme", "z_label", "journal_spec", "locale"]
     }
   ]
 }

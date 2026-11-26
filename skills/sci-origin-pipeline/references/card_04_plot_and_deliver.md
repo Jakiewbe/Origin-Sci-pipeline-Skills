@@ -6,34 +6,24 @@
 
 ## 执行清单
 
-1. **100% OriginPro 原生渲染与全局极简主题复用**
-   - **默认视觉预设**：全局默认采用 [style_publication_minimal.json](../presets/style_publication_minimal.json)（`3.0 pt` 四周闭合粗边框、`Times New Roman` 全局加粗、蓝/红明暗成对语义色板、分轴型刻度决策矩阵，由 [origin_theme.py](../scripts/origin_theme.py) 统一驱动）；仅在用户明确需要常规细框四周副刻度风格时切换 [style_academic_acs_nature.json](../presets/style_academic_acs_nature.json)。详细审美与避坑准则见 [publication_visual_and_origin_craft.md](./publication_visual_and_origin_craft.md)。
-   - **原生 `.opju` + 无头 `expGraph` 像素同源直出**：默认模式下（未传 `--skip-origin`），所有模式均由 **OriginPro 2024 原生构建可编辑 `.opju`**（通过 [origin_renderer.py](../scripts/origin_renderer.py) 与 [origin_builder.py](../scripts/origin_builder.py)，遵循 [Origin 架构规范](./origin_opju_architecture.md)），并直接调用无头 `expGraph`（固定 `tr.Margin:=2` 整页物理边界）同源导出 **`600 DPI` LZW 无损 `.tif`**、**`300 DPI .png`** 以及等比缩放至长边 `≤960 px` 的 **`_qa_previews/*_preview.jpg`**。
-   - **离线兜底边界**：`--skip-origin`（回退调用 Matplotlib `plotter.py` / `pubstyle.py`）**仅作为无 Origin 环境或用户显式跳过 `.opju` 时的离线兜底**，绝不作为常规终稿首选。
+1. **100% OriginPro 原生同源直出、双套主题与 9 种顶刊栏宽规格**
+   - **双套全局出版预设**（由 [origin_theme.py](../scripts/origin_theme.py) 驱动）：默认采用 [style_publication_minimal.json](../presets/style_publication_minimal.json)（`Times New Roman` 全局加粗、`3.0 pt` 四周闭合粗框与主线）；传 `"style_preset": "arial"` 切换为 [style_arial_clean.json](../presets/style_arial_clean.json)（`Arial` 常规不加粗、`1.5 pt` 闭合细框 / `2.0 pt` 主线）。
+   - **9 种顶刊物理印刷栏宽规格**（[journal_specs.json](../presets/journal_specs.json)）：默认 `"presentation_4_3"`（`10.40 × 7.80 in`，字号 `28 / 24 / 22 / 22 pt`）；投稿排版时可通过 CLI `--journal-spec <spec_id>` 或配置 `"journal_spec"` 一键精确缩放画布尺寸、内框英寸坐标、线宽、点径、字号与子图角标格式（`nature_single_89mm`、`nature_double_183mm`、`science_single_55mm`、`science_double_184mm`、`cell_single_85mm`、`cell_double_174mm`、`acs_single_3.25in`、`ieee_single_3.5in`）。
+   - **内框几何铁律（`4:3` 等比例 vs `1:1` 矩阵框）**：在标准 `10.40 × 7.80 in` 画布下，常规 1D 图表与 **EIS Nyquist 阻抗谱**统一锁定 **`(2.15, 0.95, 6.40, 4.80) in` 标准 `4:3` 矩形内框**（Nyquist 通过固定 `ΔZ' : Δ(-Z'') = 4 : 3` 实现物理 `1 Ω = 1 Ω` 等比例正圆阻抗弧，与常规 1D 图保持 0 像素框线对齐）；**二维伪彩云图（`contour_pseudocolor_2d`）、二维矢量场（`vector_quiver_field`）与矩阵热力图（`matrix_heatmap`）**居中锁定 **`(2.80, 0.95, 4.80, 4.80) in` 严格 `1:1` 正方形内框** + 右侧等高 64 阶 `GLayer` 色标尺。
+   - **原生全套交付产物**：默认无头会话构建 **100% 双击可编辑 `.opju`**（[origin_renderer.py](../scripts/origin_renderer.py) / [origin_builder.py](../scripts/origin_builder.py)），经 `expGraph`（`tr.Margin:=2`）同源导出 **`600 DPI` LZW `.tif`**、**`300 DPI .png`**、可选**无损矢量 `.pdf`**（配置 `"export_pdf": true`）及 **`_qa_previews/*_preview.jpg`**。`--skip-origin` 仅作无 Origin 环境下的离线兜底。
 
-2. **按真实数据、汇总表格与计算口径精准映射图型**
-   - 确保图的横纵坐标名称、量纲单位、对数/倒序设定与工作卡一～三保持绝对一致（例如缺失活性物质质量时，图轴写 `Capacity (mAh)`、Excel 表列写 `放电容量 (mAh)` 与 `N/A (缺质量)`，严禁继续标成 `mAh g^-1`；对数坐标轴如 Ragone / 粒度必须开启朝内对数次刻度，线性定量轴则关闭次刻度）。
-   - **从汇总表/矩阵按声明式图型语法直接出图**：对于已整理好的定量汇总表（`.xlsx/.xls/.csv`，含平行测点长表自动 `Mean ± SD` 聚合）、电化学瞬态数据或二维矩阵，直接选用 [chart_catalog.json](../presets/chart_catalog.json) 中的通用图型语法模式出图与导出 Source-Data 工作簿，不擅自重跑底层分峰：
-     - 分类与构成对比：`bar_grouped_gradient`（原生两步提交柔白竖向渐变柱 + 误差棒 + 同色粗体柱顶数字）、`bar_stacked` / `bar_stacked_100pct`（三明治平涂语义色带 + `0.8 pt` 纯白分隔线）；
-     - 复合坐标与局部细节：`dual_y_combo`（双 Y 同底零点对齐 + 右轴语义染色）、`curve_with_inset`（`gp.add_layer(6)` 父图框百分比定位白底内插放大图 / 子分布图，支持 `equal_aspect` 1:1 正方形锁定）；
-     - 电化学动力学与二维场：`electrochem_kinetics`（`pulse_align` 短脉冲归零压降分解、`galvanostatic_dqdv` 充放电与微分容量联图、`ragone` 双对数图）、`contour_pseudocolor_2d`（零本底纯白蓝红连续色阶二维伪彩云图 + 可选 `side_panel` 1D 联动曲线）、以及通用多面板组合入口 `chart_grammar`；
-     - **新增 4 类高颜值模板图型（模式 20–23）**：
-       - `xy_fit_and_band`（模式 20）：XY 散点 + `type=9` 透明置信带（`transparency=72`，`-w 80` 超细同色边框关闭填充）+ `-w 1500` 拟合实线 + `-k 20`（sz=9.5）3D 高光实测球 + 框内空白角无框加粗回归方程与 `R\+(2)` 标注；**注**：置信带不用 `-l 0`（会关闭填充！）；
-       - `bode_dual_panel`（模式 21）：EIS Bode 单页上下双 Layer（`Page 8.6×7.2 in`），上层 `|Z|`（`rect=[17.5,8.0,74.0,37.5]%`，`x.showLabels=0` 保留朝内对数主次刻度）、下层 `-Phase`（`rect=[17.5,49.5,74.0,37.5]%`，共享 `log(Freq/Hz)` 底轴标）；3.0 pt 粗框、`-k 20` 球点线、顶框正上方居中共享无框横排图例（`fontsize=18.5`）；
-       - `stat_distribution`（模式 22，`mark="stat_distribution"`）：加载 Origin 内置模板 `BOX+DATA+OVERLAP`（短名无后缀）；`type=206` DataRange + `gl.group(False)` 解组；逐组赋成对语义色、`transparency=35` + `1.8 pt` 描边（`set rr -w 900`）+ 同色抖动散点；
-       - `matrix_heatmap`（模式 23，`mark="matrix_heatmap"`）：加载内置模板 `Heat_Map_With_Labels`；`type=105` MatrixPlot；`MeshLineWidth=0.8`（白色单元格分隔线）；`set rhm -Z 1 -Zfs 20 -Zbold 1`（粗体 20 pt 格内数值）；近正方图框 `[15.5,11.3,56.5,71.8]%`；右侧 SPECTRUM1 色标尺 `fsize=20 Bold, 2.2 pt` 边框；
-     - 已有分峰工作簿重画：使用 `replot_deconv` 或 `xy_trend`，仅做表图一致性与面积闭合核对。
-   - 陌生谱区或仅需原始预览时使用 `raw_preview`，不强加未确认的分峰填充色块。
+2. **按真实数据与学科语义精准映射 41 种模式与无障碍色板**
+   - **坐标量纲与刻度矩阵严格对齐**：任意强度轴（光谱叠谱/核磁积分）隐去左 Y 刻度数字；分类轴隐去底 X 刻度短线；定量轴仅在 `scale == "log10"` 时开启朝内对数次刻度；缺失分母时图轴与表格同步降级（如 `Capacity (mAh)`）。
+   - **27 种声明式全学科图型语法直出**（详见 [chart_catalog.json](../presets/chart_catalog.json)，已有定量结果或汇总表直接建图，不擅自重拟合）：
+     - *分类、构成与复合层*：`bar_grouped_gradient`、`bar_stacked`、`bar_stacked_100pct`（Y 轴刻度截断于 `0..100`）、`dual_y_combo`（全高零基线对齐 + 右轴语义染色）、`curve_with_inset`（`layer.unit=7` 纯白底 `zoom`/`subchart` 内插层）、`chart_grammar`（任意 `nrows × ncols` 不等宽组图）；
+     - *生物统计、组学、药理与临床生存/ROC*：`stat_distribution`、`stat_bar_dot_sig`（均值±SD/SEM 描边柱 + 白芯圆点平行样 + 防碰撞显著性星号横杠）、`stat_violin_raincloud`（原生 Violin KDE + 内嵌四分位白盒）、`volcano_plot`（三态火山散点 + 双翼防碰撞引线）、`dose_response_4pl`（`log10` 浓度 4PL S 曲线 + 95% CI 带 + `IC50` 垂落虚线）、`kaplan_meier_plot`（Step-Horz 阶梯生存率 + Greenwood `cloglog` 95% CI 带 + 右删失竖线 + 对齐 `Number at risk` 表）、`roc_pr_curve`（`AUROC ± 95% CI` + Youden 最优截断空心点 / `AUPRC`）、`forest_ablation_plot`（倒序分类纵轴 + 水平 95% CI 森林图）；
+     - *化学催化、超快/光学物理、地学测井与非笛卡尔场*：`xy_fit_and_band`（9 类回归模型 + 95% CI 带 + `slope_triangle` 斜率三角）、`free_energy_diagram`（加粗自由能台阶 + 虚线跃迁 + 可选 `TS‡` 样条鞍点）、`nmr_spectrum`（反演 `ppm` 核磁谱 + 抬升阶梯积分）、`broken_axis_plot`（原生 X/Y 跨尺度断轴）、`dual_x_optical_spectrum`（如底轴 `nm` 公式联动顶轴 `1239.84193/x eV`）、`ternary_diagram`（原生 `Ternary` 三元相图）、`polar_radar_plot`（原生 `Polar` 极坐标方向图与正多边形蛛网 `radar` 雷达图）、`multi_track_profile`（共享反演深度轴多道剖面 + 跨道阴影层位带）、`electrochem_kinetics`、`bode_dual_panel`、`contour_pseudocolor_2d`、`matrix_heatmap`、`vector_quiver_field`（等比 2D 矢量箭头 + 模值伪彩底图）。
+   - **色盲友好与感知均匀 1052B RIFF `.pal` 色板**：支持 `paired_semantic`、`sandwich_stack`、`sequential_blue_red`、`pseudocolor_zero_white`、`diverging_blue_white_red`，以及离散色盲安全色板 `okabe_ito`、`tol_muted` 和连续感知均匀色阶 `viridis`、`cividis`、`batlow`、`vik`、`magma`。
+   - **中英双语顶刊 `Source_Data.xlsx`**：设 `"locale": "en"` 输出英文标准工作簿（`Raw_Data`、`Summary_Statistics`、`Statistical_Tests` 精确 `p_raw/p_adj`、`Curve_Fit_Summary` `IC50/R²/AIC/BIC`、`Figure_Manifest`），默认 `"zh"` 保持中文兼容。
 
-3. **跨载体一致性与 Origin 原生实图门禁复核**
-   - 核对图像标签、图注标记、Source-Data `.xlsx` 数值与方法摘要页、`quality_audit.json` 与 `.opju` 工作表/矩阵列名称及单位完全一致，弱信号/触界/缺项提示均已落盘。
-   - **双 Y 轴物理相关性与前景分离排版**：左/右轴须同图框全高同底零点对齐（如左轴元素含量 `at.%` `-k 20` 3D 高光球深色实线置于前景、右轴分峰占比 `%` 100% 堆积柱置于底层），两块无框图例（`background=0; frame=0;`）紧凑置于图框内部上方空白区，且仅展示该谱区实际存在对应分峰的关联元素（例如 `C 1s` 未分含 Li 峰时不画 `Li (at.%)`）。
-   - **视觉终审门禁（只读 `_qa_previews/*_preview.jpg`）**：必须检查由 Origin `expGraph` 直出转换的 `_qa_previews/*_preview.jpg`（禁止直接读取大幅高分辨率 `.tif`/`.png` 或重复读取未变化图片），逐项确认：
-     1. 柱顶标签水平居中、同色清晰，且坐标轴标题/图例上方**无 `Light Grids` 系统主题残留的假顶部黑横线**（须通过 `YL.frame=0; XB.frame=0; YR.frame=0;` 与 `background=0; frame=0;` 彻底关闭）；
-     2. 无误调 `legend -r;` 重建出的右上角带框默认图例遮挡曲线；
-     3. 画布四周边距匀称（`tr.Margin:=2`），无画布外隐藏对象撑爆尺寸、无文字截断或数字撞车。
-   - **用户手改 `.opju` 保护**：当基于用户手工精修过的 `.opju` 增量加图或修改样式时，先完整备份原工程并从精修图反推真实属性，**严禁改动用户已调好的图**（操作前后须用 `snapshot_origin_graph_state` 核对受保护图的 `DataPlots` 数、`GraphObjects` 数与 X/Y 坐标范围完全不变）。
+3. **视觉像素终审与手改 `.opju` 保护门禁**
+   - **只读 `_qa_previews/*_preview.jpg` 逐项目检**（严禁直读大幅 `.tif`/`.png` 原图或重复读取未变图片）：确认无标签/引线/风险表/色标尺重叠，无坐标轴标题顶部假黑横线（`YL/XB/YR/XT.frame=0`），无误重建右上角带框默认图例或极坐标残留 `BBUTN1` 按钮，且画布四周边距匀称（`tr.Margin:=2`）。
+   - **用户手改 `.opju` 保护**：在既有精修 `.opju` 上增量加图前必须先备份并用 `snapshot_origin_graph_state` 锁定既有图页状态零变动；结束会话后确认 `Origin64` 进程零残留。
 
 4. **诚实与克制交付清单**
-   - 只有在本轮实际生成并经 `validator`（`passed_file_integrity == True`）与 `_qa_previews/*_preview.jpg` 核验通过的文件才能列入完成清单；显式传 `--skip-origin` 跳过的 `.opju` 或因缺少素材未验证的环节，必须单独明确说明。
-   - **按需精简交付与目录洁净**：当用户明确指定只交付 `.opju` 等特定文件时，仅交付所要求文件且**不附带未请求的冗余报告**，用于视觉验收的 `expGraph` 预览小图仅放临时/质检目录，不在正式数据目录残留多余 `.png`/`.tif`。
+   - 仅将本轮实际生成且通过 `validator` 完整性校验（含 `.pdf` `%PDF` 头校验与 `.xlsx` 落盘核验）和 `_qa_previews` 视觉审查的文件列入已完成清单；当用户指定只交付 `.opju` 等单一产物时按需精简目录，不残留多余报告或临时图件。

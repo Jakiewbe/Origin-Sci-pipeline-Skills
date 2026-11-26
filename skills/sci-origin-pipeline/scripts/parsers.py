@@ -1070,8 +1070,32 @@ def extract_primary_discharge_curve(ndax_data: Dict[str, Any], voltage_cutoff: O
     }
 
 
+def _load_packs() -> Any:
+    import importlib
+    import sys
+
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    return importlib.import_module("packs")
+
+
+def _json_safe_domain_inspect(val: Any) -> Any:
+    if isinstance(val, np.ndarray):
+        return val.tolist()
+    if isinstance(val, (np.floating, float)):
+        return float(val) if np.isfinite(val) else None
+    if isinstance(val, (np.integer, int)) and not isinstance(val, bool):
+        return int(val)
+    if isinstance(val, dict):
+        return {str(k): _json_safe_domain_inspect(v) for k, v in val.items()}
+    if isinstance(val, (list, tuple)):
+        return [_json_safe_domain_inspect(v) for v in val]
+    return val
+
+
 def scan_directory(target_dir: str | Path) -> Dict[str, Any]:
-    """Scan an experimental folder, classify files by all 12 modalities, and surface README/notes."""
+    """Scan an experimental folder, classify files by all 12 modalities + pluggable domain packs, and surface README/notes."""
     root = Path(target_dir).resolve()
     ext_counts: Dict[str, int] = {}
     detected_files: Dict[str, List[str]] = {
@@ -1088,6 +1112,8 @@ def scan_directory(target_dir: str | Path) -> Dict[str, Any]:
         "Microscopy": [],
         "Notes": [],
     }
+    domain_pack_hits: Dict[str, List[Dict[str, Any]]] = {}
+    packs_mod = _load_packs()
 
     for dirpath, _, filenames in os.walk(root):
         for fn in filenames:
@@ -1122,10 +1148,38 @@ def scan_directory(target_dir: str | Path) -> Dict[str, Any]:
                 detected_files["Microscopy"].append(rel)
             elif ext == ".txt":
                 detected_files["Raman_or_XY"].append(rel)
+            else:
+                sniff = packs_mod.sniff_domain_file(fp)
+                if sniff and sniff.get("pack_id") and sniff["pack_id"] != "materials_electrochem":
+                    pid = str(sniff["pack_id"])
+                    domain_pack_hits.setdefault(pid, []).append(
+                        {
+                            "file": rel,
+                            "modality": str(sniff.get("modality", "")),
+                            "recommended_mode": sniff.get("recommended_mode"),
+                        }
+                    )
 
     notes_preview = {}
     for n_rel in detected_files["Notes"][:5]:
         notes_preview[n_rel] = _read_text_auto(root / n_rel)[:600]
+
+    domain_packs_summary: Dict[str, Dict[str, Any]] = {}
+    for pid, entries in domain_pack_hits.items():
+        by_mod: Dict[str, int] = {}
+        rec_modes: List[str] = []
+        for ent in entries:
+            m_name = ent["modality"]
+            by_mod[m_name] = by_mod.get(m_name, 0) + 1
+            rm = ent.get("recommended_mode")
+            if rm and rm not in rec_modes:
+                rec_modes.append(str(rm))
+        domain_packs_summary[pid] = {
+            "count": len(entries),
+            "modalities": by_mod,
+            "recommended_modes": rec_modes,
+            "sample_files": [ent["file"] for ent in entries[:12]],
+        }
 
     return {
         "scanned_root": str(root),
@@ -1133,6 +1187,7 @@ def scan_directory(target_dir: str | Path) -> Dict[str, Any]:
         "classified_counts": {k: len(v) for k, v in detected_files.items() if v},
         "sample_files": {k: v[:12] for k, v in detected_files.items() if v},
         "notes_preview": notes_preview,
+        "domain_packs": domain_packs_summary,
     }
 
 
@@ -1153,6 +1208,10 @@ def inspect_data_file(path: str | Path) -> Dict[str, Any]:
     if p.is_dir():
         return scan_directory(p)
     ext = p.suffix.lower()
+
+    if ext in (".jdx", ".dx", ".jcamp", ".s1p", ".s2p", ".jsonl", ".fcs", ".mzml", ".h5ad"):
+        packs_mod = _load_packs()
+        return _json_safe_domain_inspect(packs_mod.parse_domain_file(p))
 
     if ext in (".xls", ".xlsx"):
         if ext == ".xls":

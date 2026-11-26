@@ -1,12 +1,13 @@
 {
   "name": "sci-origin-pipeline",
-  "displayName": "SciOrigin v6.0 · 跨材料科研分析与 OriginPro 原生出图套件",
-  "version": "6.0.0",
-  "description": "面向多材料表征、电化学动力学与汇总统计的科研工作流：固定「核对数据→选择方法→审查结论→出图与交付」四卡闭环，内置 Times New Roman 加粗与 Arial 常规两套像素级对齐出版预设，100% 原生构建可编辑 Origin (.opju) 并直出 600 DPI LZW .tif / 300 DPI .png 与结构化 Source-Data .xlsx。",
+  "displayName": "SciOrigin v7.0 · 全科研领域数据分析与 OriginPro 原生出图套件",
+  "version": "7.0.0",
+  "description": "面向材料表征、电化学、生物医学/多组学、药理临床生存/ROC、化学催化、物理光学、地学测井与 AI4Science 的全科研领域工作流：内置 6 大可插拔学科包与 41 种分析及声明式图型模式（含三元相图、极坐标/雷达图、断轴、非线性双 X 轴与二维矢量场），固定「核对数据→选择方法→审查结论→原生交付」四卡闭环，支持双套出版预设 × 9 种顶刊栏宽规格（Nature/Science/Cell/ACS/IEEE）与色盲安全色板，100% 原生构建可编辑 Origin (.opju) 并同源直出 600 DPI LZW .tif、300 DPI .png、无损矢量 .pdf 与中英双语 Source_Data.xlsx。",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
-    "先核对这批新实验数据的样品、列单位与可用信号，再建议分析方法",
-    "对比当前 XPS 谱区的多组候选分峰模型，检查参数触界与面积比例敏感性",
-    "按 Arial 常规预设或默认新罗马加粗预设生成出版级 Origin 工程与高清图"
+    "扫描并核对这批实验数据（含谱学/电化学/.jdx/.s2p/.fcs/.jsonl/CSV），汇报样品映射、单位与推荐分析模式",
+    "对多组平行样执行正态与方差齐性检验、自动标注显著性星号，或拟合 4PL 剂量效应 IC50 / Kaplan-Meier 生存 / ROC 曲线",
+    "对比当前重叠 XPS/Raman 谱区的多组候选分峰模型，核查参数触界与组分占比敏感性",
+    "按 Nature 单栏（89 mm）或默认 4:3 预设原生导出可编辑 Origin (.opju)、无损矢量 .pdf 与英文 Source_Data.xlsx"
   ]
 }

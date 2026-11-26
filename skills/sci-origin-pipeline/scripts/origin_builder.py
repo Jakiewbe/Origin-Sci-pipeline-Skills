@@ -443,8 +443,8 @@ def render_categorical_x_labels_clean(
     gl.lt_exec("layer.x.showLabels=0; layer.x.ticks=0; layer.x.showMinorTicks=0;")
 
     tgt_wh = _PAGE_TARGET_INCHES.get(gp.name)
-    pw_in = tgt_wh[0] if tgt_wh else max(4.5, float(getattr(gp.obj, "Width", spec["page_rect_w_in"])))
-    ph_in = tgt_wh[1] if tgt_wh else max(3.5, float(getattr(gp.obj, "Height", spec["page_rect_h_in"])))
+    pw_in = tgt_wh[0] if tgt_wh else max(1.5, float(getattr(gp.obj, "Width", spec["page_rect_w_in"])))
+    ph_in = tgt_wh[1] if tgt_wh else max(1.2, float(getattr(gp.obj, "Height", spec["page_rect_h_in"])))
     try:
         lw_val = float(op.po.LT_evaluate("layer.width"))
         lu_val = int(round(float(op.po.LT_evaluate("layer.unit"))))
@@ -818,12 +818,13 @@ def flush_page_overlays(op: Any, gp: Any) -> None:
     dtxt_items = _PENDING_DATA_TEXT_ITEMS.get(gname, [])
     leg_items = _PENDING_LEGENDS.get(gname, [])
 
+    tgt_ov_wh = _PAGE_TARGET_INCHES.get(gname)
     if getattr(gp.obj, "Units", 0) != 0:
         w_cur = float(getattr(gp.obj, "Width", 8.0))
         h_cur = float(getattr(gp.obj, "Height", 6.0))
         gp.obj.Units = 0
-        gp.obj.Width = 8.0 if (w_cur > 30.0 or w_cur < 1.5) else w_cur
-        gp.obj.Height = 6.0 if (h_cur > 30.0 or h_cur < 1.5) else h_cur
+        gp.obj.Width = tgt_ov_wh[0] if tgt_ov_wh else (8.0 if (w_cur > 30.0 or w_cur < 1.2) else w_cur)
+        gp.obj.Height = tgt_ov_wh[1] if tgt_ov_wh else (6.0 if (h_cur > 30.0 or h_cur < 1.0) else h_cur)
 
     if not ax_items and not txt_items and not dtxt_items and not leg_items:
         _FLUSHED_PAGES.add(gname)
@@ -841,8 +842,8 @@ def flush_page_overlays(op: Any, gp: Any) -> None:
         if it.get("mode") == "cat_x_horiz"
     }
 
-    pw_in = max(4.0, float(getattr(gp.obj, "Width", 8.0)))
-    ph_in = max(3.5, float(getattr(gp.obj, "Height", 6.0)))
+    pw_in = tgt_ov_wh[0] if tgt_ov_wh else max(1.5, float(getattr(gp.obj, "Width", 8.0)))
+    ph_in = tgt_ov_wh[1] if tgt_ov_wh else max(1.2, float(getattr(gp.obj, "Height", 6.0)))
 
     active_spec = get_active_spec()
     upi = _origin_units_per_inch(active_spec)
@@ -877,7 +878,7 @@ def flush_page_overlays(op: Any, gp: Any) -> None:
     # Final list of marker swatches: (x_val, y_bot_val, color_hex, kind_code, interior_code, sym_size)
     final_markers: List[Tuple[float, float, str, int, int, float]] = []
 
-    # 1. Resolve Axis Titles (`XB`, `YL`, `YR`)
+    # 1. Resolve Axis Titles (`XB`, `XT`, `YL`, `YR`)
     for ax in ax_items:
         ln = ax["layer_num"]
         onm = ax["obj_name"]
@@ -891,8 +892,20 @@ def flush_page_overlays(op: Any, gp: Any) -> None:
         if onm == "XB":
             xp = l_p + 0.5 * w_p
             bot_in = ph_in * ((t_p + h_p) / 100.0)
-            if u_code == 7 or fs <= 17.0:
+            if ph_in < 4.8:
+                sy_j = ph_in / 7.80
+                if u_code == 7:
+                    y_in = bot_in + 0.44 * sy_j
+                elif h_p < 48.0 and t_p < 12.0:
+                    y_in = min(ph_in - 0.34 * sy_j, bot_in + 0.78 * sy_j)
+                elif ln in layers_with_cat2:
+                    y_in = min(ph_in - 0.34 * sy_j, bot_in + 1.44 * sy_j)
+                else:
+                    y_in = min(ph_in - 0.34 * sy_j, bot_in + 0.98 * sy_j)
+            elif u_code == 7:
                 y_in = bot_in + 0.44
+            elif h_p < 48.0 and t_p < 12.0:
+                y_in = min(ph_in - 0.36, bot_in + 0.78 * (ph_in / 7.80))
             elif h_p < 42.0 and fs < 24.0:
                 y_in = min(ph_in - 0.26, bot_in + 0.68)
             elif ln in layers_with_cat2:
@@ -901,6 +914,13 @@ def flush_page_overlays(op: Any, gp: Any) -> None:
                 y_in = min(ph_in - 0.36, bot_in + 0.98)
             else:
                 y_in = min(ph_in - 0.36, bot_in + 0.98)
+            y_top = (y_in / ph_in) * 100.0
+            final_texts.append((xp, 100.0 - y_top, rich, fs, col_i, 0, 0))
+
+        elif onm == "XT":
+            xp = l_p + 0.5 * w_p
+            top_in = ph_in * (t_p / 100.0)
+            y_in = max(0.36 * (ph_in / 7.8), top_in - 0.88 * (ph_in / 7.8))
             y_top = (y_in / ph_in) * 100.0
             final_texts.append((xp, 100.0 - y_top, rich, fs, col_i, 0, 0))
 
@@ -913,19 +933,32 @@ def flush_page_overlays(op: Any, gp: Any) -> None:
                     break
                 vis_txt = nxt
             n_ch = max(1, len(vis_txt.strip()))
-            layer_h_in = max(1.1, ph_in * (h_p / 100.0))
+            sy_j = (ph_in / 7.80) if ph_in < 4.8 else 1.0
+            sx_j = (pw_in / 10.40) if pw_in < 5.5 else 1.0
+            layer_h_in = max(0.65 * sy_j, ph_in * (h_p / 100.0))
             cy_in = ph_in * ((t_p + 0.5 * h_p) / 100.0)
-            edge_safe_span_in = max(0.9, 2.0 * min(cy_in - 0.30, ph_in - cy_in - 0.30))
+            edge_pad_y = 0.30 * sy_j
+            edge_safe_span_in = max(0.55 * sy_j, 2.0 * min(cy_in - edge_pad_y, ph_in - cy_in - edge_pad_y))
             max_span_in = min(edge_safe_span_in, layer_h_in * (0.94 if h_p < 42.0 else 1.22))
             max_pts_fit = (max_span_in * upi) / (0.55 * n_ch)
-            fs = min(fs, max(12.5, max_pts_fit))
+            min_fs_floor = 5.5 if ph_in < 4.8 else 12.5
+            fs = min(fs, max(min_fs_floor, max_pts_fit))
             y_top = t_p + 0.5 * h_p
             l_in = pw_in * (l_p / 100.0)
             w_in = pw_in * (w_p / 100.0)
             has_vis_y_lbl = (y_sl != 0) or ((gname, ln) in _CUSTOM_Y_LABEL_LAYERS)
             if onm == "YL":
                 w_extra = y_wide_layers.get(ln, 0.0)
-                if u_code == 7 or (orig_fs <= 17.0 and w_p < 36.0):
+                if pw_in < 5.5:
+                    if u_code == 7:
+                        x_in = max(0.22 * sx_j, l_in - 0.74 * sx_j)
+                    elif not has_vis_y_lbl:
+                        x_in = max(0.28 * sx_j, l_in - (0.42 if w_p < 42.0 else 0.56) * sx_j)
+                    elif w_p < 42.0:
+                        x_in = max(0.28 * sx_j, l_in - (0.90 + 0.08 * w_extra) * sx_j)
+                    else:
+                        x_in = max(0.34 * sx_j, l_in - (1.36 + 0.09 * w_extra) * sx_j)
+                elif u_code == 7 or (orig_fs <= 17.0 and w_p < 36.0):
                     x_in = max(0.24, l_in - 0.74)
                 elif not has_vis_y_lbl:
                     x_in = max(0.32, l_in - (0.42 if w_p < 42.0 else 0.56))
@@ -935,7 +968,7 @@ def flush_page_overlays(op: Any, gp: Any) -> None:
                     x_in = max(0.38, l_in - (1.36 + 0.09 * w_extra))
                 xp = (x_in / pw_in) * 100.0
             else:
-                x_in = min(pw_in - 0.38, l_in + w_in + (0.86 if w_p < 42.0 else 1.30))
+                x_in = min(pw_in - 0.38 * sx_j, l_in + w_in + (0.86 if w_p < 42.0 else 1.30) * sx_j)
                 xp = (x_in / pw_in) * 100.0
             final_texts.append((xp, 100.0 - y_top, rich, fs, col_i, 90, 0))
 
@@ -1012,10 +1045,13 @@ def flush_page_overlays(op: Any, gp: Any) -> None:
     for lg in leg_items:
         ln = lg["layer_num"]
         fb = lg["fallback_rect_pct"]
-        l_p, t_p, w_p, h_p, _u, _ysl = _query_layer_rect_page_pct(op, gp, ln, rect_cache, fallback=fb)
+        pmode = lg["pos_mode"]
+        if pmode == "page_upper_right" or lg.get("use_explicit_rect"):
+            l_p, t_p, w_p, h_p = fb
+        else:
+            l_p, t_p, w_p, h_p, _u, _ysl = _query_layer_rect_page_pct(op, gp, ln, rect_cache, fallback=fb)
         fs = lg["fontsize"]
         horiz = lg["horizontal"]
-        pmode = lg["pos_mode"]
         ents: List[Tuple[str, str, str]] = lg["entries"]
         n_e = len(ents)
         if n_e == 0:
@@ -1128,21 +1164,41 @@ def flush_page_overlays(op: Any, gp: Any) -> None:
                     for ch in pv_e
                 )
                 max_em_v = max(max_em_v, em_e)
-            block_w = sw_w + txt_gap + (max_em_v + 0.20) * fs * unit_to_pct_w + (1.2 if w_p < 40.0 else 1.8)
             r_pad = 1.4 if w_p < 40.0 else 2.2
-            if pmode == "corner_upper_right":
-                x0 = max(l_p + 1.8, l_p + w_p - block_w - r_pad)
-                y0_top = t_p + (3.6 if h_p < 45.0 else 4.8)
-            elif pmode == "corner_lower_left":
-                x0 = l_p + (1.8 if w_p < 40.0 else 2.6)
-                y0_top = max(t_p + 4.6, t_p + h_p - max(0, n_e - 1) * row_step - 5.6)
-            elif pmode == "corner_lower_right":
-                x0 = max(l_p + 1.8, l_p + w_p - block_w - r_pad)
-                y0_top = max(t_p + 4.6, t_p + h_p - max(0, n_e - 1) * row_step - 5.6)
+            pad_blk = 1.2 if w_p < 40.0 else 1.8
+            block_w = sw_w + txt_gap + (max_em_v + 0.20) * fs * unit_to_pct_w + pad_blk
+            min_leg_fs = 5.5 if ph_in < 4.8 else 14.5
+
+            if pmode == "page_upper_right":
+                max_allow_w = max(14.0, w_p - 1.2)
+                if block_w > max_allow_w:
+                    avail_txt = max(8.0, max_allow_w - sw_w - txt_gap - pad_blk)
+                    fs = max(min_leg_fs, min(fs, avail_txt / max((max_em_v + 0.20) * unit_to_pct_w, 1e-6)))
+                    row_step = max(3.4 if ph_in < 4.8 else 4.2, fs * 1.88 * cap_to_pct_h)
+                    block_w = sw_w + txt_gap + (max_em_v + 0.20) * fs * unit_to_pct_w + pad_blk
+                x0 = max(l_p, min(97.2 - block_w, l_p + w_p - block_w - 0.8))
+                y0_top = max(3.2, t_p)
             else:
-                # corner_upper_left
-                x0 = l_p + (1.8 if w_p < 40.0 else 2.6)
-                y0_top = t_p + (3.6 if h_p < 45.0 else 4.8)
+                max_inbox_w = 0.52 * w_p
+                if block_w > max_inbox_w and w_p >= 35.0:
+                    avail_txt = max(8.0, max_inbox_w - sw_w - txt_gap - pad_blk)
+                    fs = max(min_leg_fs, min(fs, avail_txt / max((max_em_v + 0.20) * unit_to_pct_w, 1e-6)))
+                    row_step = max(3.5 if h_p < 45.0 else 4.4, fs * 1.88 * cap_to_pct_h)
+                    block_w = sw_w + txt_gap + (max_em_v + 0.20) * fs * unit_to_pct_w + pad_blk
+
+                if pmode == "corner_upper_right":
+                    x0 = max(l_p + 1.8, l_p + w_p - block_w - r_pad)
+                    y0_top = t_p + (3.6 if h_p < 45.0 else 4.8)
+                elif pmode == "corner_lower_left":
+                    x0 = l_p + (1.8 if w_p < 40.0 else 2.6)
+                    y0_top = max(t_p + 4.6, t_p + h_p - max(0, n_e - 1) * row_step - 5.6)
+                elif pmode == "corner_lower_right":
+                    x0 = max(l_p + 1.8, l_p + w_p - block_w - r_pad)
+                    y0_top = max(t_p + 4.6, t_p + h_p - max(0, n_e - 1) * row_step - 5.6)
+                else:
+                    # corner_upper_left
+                    x0 = l_p + (1.8 if w_p < 40.0 else 2.6)
+                    y0_top = t_p + (3.6 if h_p < 45.0 else 4.8)
 
             for idx_e, (raw_l, c_hex, sw_kind) in enumerate(ents):
                 rl = prepare_plot_label_rich_text(raw_l, format_math=True)
@@ -1297,6 +1353,8 @@ def _append_swatch_primitives(
         final_lines.append(([rx0, rx1, rx1, rx0, rx0], [yb - ry_h, yb - ry_h, yb + ry_h, yb + ry_h, yb - ry_h], bdr_hex, bdr_u, 0))
     elif sk == "scatter":
         final_markers.append((x0 + 0.5 * sw_w, yb, c_hex, 2, 1, sym_sz))
+    elif sk == "scatter_open":
+        final_markers.append((x0 + 0.5 * sw_w, yb, c_hex, 2, 2, sym_sz))
     elif sk == "open_circle":
         final_lines.append(([x0, x0 + sw_w], [yb, yb], c_hex, cw_u, 0))
         final_markers.append((x0 + 0.5 * sw_w, yb, c_hex, 2, 2, sym_sz))

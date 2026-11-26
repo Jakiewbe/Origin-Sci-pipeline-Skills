@@ -23,6 +23,7 @@ import origin_theme as ot
 
 SUPPORTED_LAYER_MARKS = (
     "line_scatter",
+    "scatter",
     "bar_grouped_gradient",
     "bar_stacked",
     "bar_stacked_100pct",
@@ -33,7 +34,17 @@ SUPPORTED_LAYER_MARKS = (
     "stat_distribution",
     "stat_box_jitter",
     "line_band",
+    "bar_dot_error",
+    "violin_box",
+    "forest_ci",
+    "step_line",
+    "energy_step",
+    "km_step",
+    "ternary_scatter",
+    "polar_line",
+    "vector_quiver",
 )
+VALID_MARKS = SUPPORTED_LAYER_MARKS
 
 SUPPORTED_GUIDE_KINDS = (
     "vline",
@@ -43,6 +54,16 @@ SUPPORTED_GUIDE_KINDS = (
     "peak_tag",
     "trend_arrow",
     "text",
+    "sig_bracket",
+    "slope_triangle",
+)
+VALID_GUIDE_KINDS = SUPPORTED_GUIDE_KINDS
+
+SUPPORTED_PANEL_COORDS = (
+    "cartesian",
+    "ternary",
+    "polar",
+    "radar",
 )
 
 SUPPORTED_GRAMMAR_MODES = (
@@ -58,7 +79,23 @@ SUPPORTED_GRAMMAR_MODES = (
     "bode_dual_panel",
     "stat_distribution",
     "matrix_heatmap",
+    "stat_bar_dot_sig",
+    "stat_violin_raincloud",
+    "volcano_plot",
+    "forest_ablation_plot",
+    "free_energy_diagram",
+    "dose_response_4pl",
+    "kaplan_meier_plot",
+    "roc_pr_curve",
+    "nmr_spectrum",
+    "broken_axis_plot",
+    "dual_x_optical_spectrum",
+    "ternary_diagram",
+    "polar_radar_plot",
+    "multi_track_profile",
+    "vector_quiver_field",
 )
+CHART_MODES = SUPPORTED_GRAMMAR_MODES
 
 SUPPORTED_KINETICS_SUBTYPES = (
     "pulse_align",
@@ -68,6 +105,7 @@ SUPPORTED_KINETICS_SUBTYPES = (
 
 ORIGIN_PLOT_ID_BY_MARK: Dict[str, int] = {
     "line_scatter": 202,
+    "scatter": 201,
     "bar_grouped_gradient": 203,
     "bar_stacked": 213,
     "bar_stacked_100pct": 213,
@@ -78,10 +116,20 @@ ORIGIN_PLOT_ID_BY_MARK: Dict[str, int] = {
     "stat_distribution": 206,
     "stat_box_jitter": 206,
     "line_band": 202,
+    "bar_dot_error": 203,
+    "violin_box": 206,
+    "forest_ci": 201,
+    "step_line": 200,
+    "energy_step": 200,
+    "km_step": 200,
+    "ternary_scatter": 245,
+    "polar_line": 192,
+    "vector_quiver": 218,
 }
 
 ORIGIN_TEMPLATE_BY_MARK: Dict[str, Optional[str]] = {
     "line_scatter": None,
+    "scatter": None,
     "bar_grouped_gradient": "COLUMN",
     "bar_stacked": "STACKCOLUMN",
     "bar_stacked_100pct": "StackColP",
@@ -92,6 +140,15 @@ ORIGIN_TEMPLATE_BY_MARK: Dict[str, Optional[str]] = {
     "stat_distribution": "BOX+DATA+OVERLAP",
     "stat_box_jitter": "BOX+DATA+OVERLAP",
     "line_band": None,
+    "bar_dot_error": "COLUMN",
+    "violin_box": "Violin",
+    "forest_ci": None,
+    "step_line": None,
+    "energy_step": None,
+    "km_step": None,
+    "ternary_scatter": "Ternary",
+    "polar_line": "Polar",
+    "vector_quiver": "VECTXYXY",
 }
 
 
@@ -262,6 +319,67 @@ class SeriesSpec:
         return cls(**d)
 
 
+def _normalize_axis_breaks(raw_breaks: Optional[Sequence[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    if not raw_breaks:
+        return []
+    out: List[Dict[str, Any]] = []
+    for idx, b in enumerate(raw_breaks):
+        if not isinstance(b, dict):
+            raise TypeError(f"AxisSpec.breaks[{idx}] must be a dict, got {type(b).__name__}")
+        raw_from = b.get("from", b.get("start"))
+        raw_to = b.get("to", b.get("end"))
+        if raw_from is None or raw_to is None:
+            raise ValueError(f"AxisSpec.breaks[{idx}] requires numeric 'from' and 'to' fields.")
+        b_from = float(raw_from)
+        b_to = float(raw_to)
+        if not (math.isfinite(b_from) and math.isfinite(b_to)):
+            raise ValueError(f"AxisSpec.breaks[{idx}] 'from'/'to' must be finite, got ({b_from}, {b_to})")
+        if abs(b_from - b_to) <= 1e-12:
+            raise ValueError(f"AxisSpec.breaks[{idx}] requires 'from' != 'to', got {b_from}")
+        pos_pct = float(b.get("position_pct", b.get("position", 48.0)))
+        if not (5.0 <= pos_pct <= 95.0):
+            raise ValueError(f"AxisSpec.breaks[{idx}] position_pct must be in [5, 95], got {pos_pct}")
+        sc_after = str(b.get("scale_after", "linear")).strip().lower()
+        if sc_after == "log":
+            sc_after = "log10"
+        if sc_after not in ot.VALID_AXIS_SCALES:
+            raise ValueError(
+                f"AxisSpec.breaks[{idx}] scale_after must be one of {ot.VALID_AXIS_SCALES}, got {sc_after!r}"
+            )
+        inc_before = float(b["inc_before"]) if b.get("inc_before") is not None else None
+        inc_after = float(b["inc_after"]) if b.get("inc_after") is not None else None
+        out.append(
+            {
+                "from": b_from,
+                "to": b_to,
+                "position_pct": pos_pct,
+                "scale_after": sc_after,
+                "inc_before": inc_before,
+                "inc_after": inc_after,
+            }
+        )
+    return out
+
+
+def _normalize_linked_top(raw_linked: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if raw_linked is None:
+        return None
+    if not isinstance(raw_linked, dict):
+        raise TypeError(f"AxisSpec.linked_top must be a dict or None, got {type(raw_linked).__name__}")
+    lbl = str(raw_linked.get("label", "")).strip()
+    formula = str(raw_linked.get("formula", "1239.84193/x")).strip()
+    if not formula:
+        raise ValueError("AxisSpec.linked_top requires a non-empty 'formula' string (e.g. '1239.84193/x').")
+    m_step = float(raw_linked["major_step"]) if raw_linked.get("major_step") is not None else None
+    rich_lbl = raw_linked.get("origin_rich_label") or ot.format_origin_axis_title(lbl, bold=True)
+    return {
+        "label": lbl,
+        "formula": formula,
+        "major_step": m_step,
+        "origin_rich_label": rich_lbl,
+    }
+
+
 @dataclass
 class AxisSpec:
     which: str = "x"
@@ -277,6 +395,8 @@ class AxisSpec:
     major_step: Optional[float] = None
     origin_rich_label: Optional[str] = None
     tick_policy: Dict[str, Any] = field(default_factory=dict)
+    breaks: List[Dict[str, Any]] = field(default_factory=list)
+    linked_top: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         w = str(self.which).strip().lower()
@@ -294,6 +414,10 @@ class AxisSpec:
             self.limits = (float(self.limits[0]), float(self.limits[1]))
         if self.categories is not None:
             self.categories = [str(c) for c in self.categories]
+        if self.major_step is not None:
+            self.major_step = float(self.major_step)
+        self.breaks = _normalize_axis_breaks(self.breaks)
+        self.linked_top = _normalize_linked_top(self.linked_top)
         if self.origin_rich_label is None:
             self.origin_rich_label = ot.format_origin_axis_title(self.label, bold=True)
         if not self.tick_policy:
@@ -322,6 +446,11 @@ class AxisSpec:
                 raise ValueError(f"AxisSpec.limits must be finite, got {self.limits!r}")
             if self.scale == "log10" and (lo <= 0.0 or hi <= 0.0):
                 raise ValueError(f"Log10 axis '{self.which}' requires strictly positive limits, got {self.limits!r}")
+        for idx, b in enumerate(self.breaks):
+            if b["from"] == b["to"]:
+                raise ValueError(f"AxisSpec.breaks[{idx}] requires 'from' != 'to'.")
+        if self.linked_top is not None and self.which != "x":
+            raise ValueError(f"AxisSpec.linked_top is only supported on 'x' axis, got {self.which!r}")
 
     def to_dict(self) -> Dict[str, Any]:
         return _to_jsonable(self.__dict__)
@@ -331,6 +460,8 @@ class AxisSpec:
         d = copy.deepcopy(data)
         if d.get("limits") is not None:
             d["limits"] = tuple(d["limits"])
+        allowed = set(cls.__dataclass_fields__.keys())
+        d = {k: v for k, v in d.items() if k in allowed}
         return cls(**d)
 
 
@@ -343,9 +474,11 @@ class GuideSpec:
     end: Optional[float] = None
     anchor_pos: Optional[float] = None
     x: Optional[float] = None
+    x2: Optional[float] = None
     y: Optional[float] = None
     x_end: Optional[float] = None
     y_end: Optional[float] = None
+    tip_drop: Optional[float] = None
     label: str = ""
     color: str = "#3E86DE"
     line_style: str = "dashed"
@@ -353,6 +486,7 @@ class GuideSpec:
     font_size_pt: float = 20.0
     shoulder_y_frac: float = 0.77
     label_side: str = "right"
+    meta: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         k_norm = str(self.kind).strip().lower()
@@ -360,9 +494,13 @@ class GuideSpec:
             k_norm = "span_v"
         elif k_norm in ("hspan_arrow", "hspan", "horizontal_span"):
             k_norm = "span_h"
+        elif k_norm in ("bracket", "significance_bracket", "stat_bracket"):
+            k_norm = "sig_bracket"
+        elif k_norm in ("slope", "power_slope", "slope_guide"):
+            k_norm = "slope_triangle"
         self.kind = k_norm
         self.color = ot.normalize_hex(self.color)
-        for attr in ("value", "start", "end", "anchor_pos", "x", "y", "x_end", "y_end"):
+        for attr in ("value", "start", "end", "anchor_pos", "x", "x2", "y", "x_end", "y_end", "tip_drop"):
             v = getattr(self, attr)
             if v is not None:
                 setattr(self, attr, float(v))
@@ -371,6 +509,17 @@ class GuideSpec:
                 self.x = self.anchor_pos
             elif self.anchor_pos is None and self.x is not None:
                 self.anchor_pos = self.x
+        elif self.kind in ("sig_bracket", "slope_triangle"):
+            if self.x is None and self.start is not None:
+                self.x = self.start
+            if self.x2 is None and self.x_end is not None:
+                self.x2 = self.x_end
+            elif self.x2 is None and self.end is not None:
+                self.x2 = self.end
+            if self.x_end is None and self.x2 is not None:
+                self.x_end = self.x2
+        if self.meta is None:
+            self.meta = {}
         self.validate()
 
     def validate(self) -> None:
@@ -384,6 +533,15 @@ class GuideSpec:
             raise ValueError(f"GuideSpec(kind={self.kind!r}) requires numeric `value`.")
         if self.kind in ("span_v", "span_h") and (self.start is None or self.end is None):
             raise ValueError(f"GuideSpec(kind={self.kind!r}) requires both `start` and `end`.")
+        if self.kind == "sig_bracket" and (self.value is None or self.x is None or self.x2 is None):
+            raise ValueError("GuideSpec(kind='sig_bracket') requires numeric `value` (y_bar), `x` (x1), and `x2`.")
+        if self.kind == "slope_triangle":
+            if self.x is None or self.y is None or self.x2 is None or self.value is None:
+                raise ValueError(
+                    "GuideSpec(kind='slope_triangle') requires numeric `x` (x_start), `y` (y_start), `x2` (x_end), and `value` (slope)."
+                )
+            if abs(self.x2 - self.x) <= 1e-12:
+                raise ValueError("GuideSpec(kind='slope_triangle') requires `x` != `x2`.")
 
     def to_dict(self) -> Dict[str, Any]:
         d = _to_jsonable(self.__dict__)
@@ -395,17 +553,49 @@ class GuideSpec:
             d["x_start"] = self.start
             d["x_end"] = self.end
             d["span"] = round(abs(self.end - self.start), 6)
+        elif self.kind == "sig_bracket":
+            d["x1"] = self.x
+            d["x2"] = self.x2
+            d["y_bar"] = self.value
+            d["tip_drop"] = self.tip_drop
+        elif self.kind == "slope_triangle":
+            d["x_start"] = self.x
+            d["y_start"] = self.y
+            d["x_end"] = self.x2
+            d["slope"] = self.value
         return d
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "GuideSpec":
         d = copy.deepcopy(data)
-        if d.get("start") is None and "y_start" in d:
+        raw_kind = str(d.get("kind", "vline")).strip().lower()
+        is_slope = raw_kind in ("slope_triangle", "slope", "power_slope", "slope_guide")
+        if d.get("x") is None and "x_start" in d and is_slope:
+            d["x"] = d.pop("x_start")
+        else:
+            d.pop("x_start", None)
+        if d.get("y") is None and "y_start" in d and is_slope:
+            d["y"] = d.pop("y_start")
+        elif d.get("start") is None and "y_start" in d:
             d["start"] = d.pop("y_start")
         else:
             d.pop("y_start", None)
-        if d.get("end") is None and d.get("kind") in ("span_v", "vspan_arrow") and "y_end" in d:
+        if d.get("end") is None and raw_kind in ("span_v", "vspan_arrow") and "y_end" in d:
             d["end"] = d.pop("y_end")
+        if d.get("x") is None and "x1" in d:
+            d["x"] = d.pop("x1")
+        else:
+            d.pop("x1", None)
+        if d.get("value") is None and "y_bar" in d:
+            d["value"] = d.pop("y_bar")
+        else:
+            d.pop("y_bar", None)
+        if d.get("value") is None and "slope" in d:
+            d["value"] = d.pop("slope")
+        else:
+            d.pop("slope", None)
+        if d.get("x2") is None and (raw_kind in ("sig_bracket", "bracket", "significance_bracket", "stat_bracket") or is_slope) and "x_end" in d:
+            d["x2"] = d.get("x_end")
         if "linestyle" in d and "line_style" not in d:
             d["line_style"] = d.pop("linestyle")
         allowed = set(cls.__dataclass_fields__.keys())
@@ -611,6 +801,7 @@ class PanelSpec:
     col: int = 0
     row_span: int = 1
     col_span: int = 1
+    coord: str = "cartesian"
     x_axis: AxisSpec = field(default_factory=lambda: AxisSpec(which="x"))
     y1_axis: AxisSpec = field(default_factory=lambda: AxisSpec(which="y1"))
     y2_axis: Optional[AxisSpec] = None
@@ -627,6 +818,7 @@ class PanelSpec:
     meta: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        self.coord = str(self.coord or "cartesian").strip().lower()
         if isinstance(self.x_axis, dict):
             self.x_axis = AxisSpec.from_dict(self.x_axis)
         if isinstance(self.y1_axis, dict):
@@ -652,6 +844,10 @@ class PanelSpec:
     def validate(self) -> None:
         if not isinstance(self.panel_id, str) or not self.panel_id.strip():
             raise ValueError("PanelSpec.panel_id must be a non-empty string.")
+        if self.coord not in SUPPORTED_PANEL_COORDS:
+            raise ValueError(
+                f"PanelSpec.coord must be one of {SUPPORTED_PANEL_COORDS}, got {self.coord!r}"
+            )
         if self.row < 0 or self.col < 0 or self.row_span < 1 or self.col_span < 1:
             raise ValueError(
                 f"Invalid grid placement for panel '{self.panel_id}': row={self.row}, col={self.col}, "
@@ -682,7 +878,10 @@ class PanelSpec:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PanelSpec":
-        return cls(**copy.deepcopy(data))
+        d = copy.deepcopy(data)
+        allowed = set(cls.__dataclass_fields__.keys())
+        d = {k: v for k, v in d.items() if k in allowed}
+        return cls(**d)
 
 
 @dataclass
@@ -691,6 +890,7 @@ class FigureSpec:
     mode: str = "chart_grammar"
     subtype: Optional[str] = None
     style_preset: str = ot.DEFAULT_STYLE_PRESET
+    journal_spec: Optional[str] = None
     theme: Dict[str, Any] = field(default_factory=dict)
     nrows: int = 1
     ncols: int = 1
@@ -704,6 +904,7 @@ class FigureSpec:
     template_override: Optional[str] = None
     summary_metrics: Dict[str, Any] = field(default_factory=dict)
     audit_notes: List[str] = field(default_factory=list)
+    meta: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.panels = [
@@ -714,6 +915,15 @@ class FigureSpec:
         self.height_ratios = [float(r) for r in self.height_ratios]
         if not self.theme:
             self.theme = ot.load_theme(self.style_preset)
+        if self.journal_spec:
+            self.theme = ot.apply_journal_spec(self.theme, self.journal_spec)
+            self.journal_spec = str(self.theme.get("journal_spec") or self.journal_spec)
+            if self.journal_spec != "presentation_4_3" and "width_mm" in self.theme and "height_mm" in self.theme:
+                if (self.width_mm, self.height_mm) == (140.0, 108.0):
+                    self.width_mm = float(self.theme["width_mm"])
+                    self.height_mm = float(self.theme["height_mm"])
+        if self.meta is None:
+            self.meta = {}
         self.validate()
 
     def validate(self) -> None:
@@ -754,6 +964,8 @@ class FigureSpec:
             d["summary_metrics"] = d.pop("metrics")
         else:
             d.pop("metrics", None)
+        allowed = set(cls.__dataclass_fields__.keys())
+        d = {k: v for k, v in d.items() if k in allowed}
         return cls(**d)
 
 
@@ -826,13 +1038,22 @@ def _build_guides_from_cfg(guides_cfg: Sequence[Dict[str, Any]], theme: Dict[str
             kind = "span_v"
         elif raw_kind in ("hspan_arrow", "hspan", "horizontal_span"):
             kind = "span_h"
+        elif raw_kind in ("bracket", "significance_bracket", "stat_bracket"):
+            kind = "sig_bracket"
+        elif raw_kind in ("slope", "power_slope", "slope_guide", "slope_triangle"):
+            kind = "slope_triangle"
         else:
             kind = raw_kind
-        val = g.get("value", g.get("pos"))
-        start_v = g.get("start", g.get("y_start"))
+        val = g.get("value", g.get("slope", g.get("y_bar", g.get("pos"))))
+        start_v = g.get("start", g.get("y_start") if kind != "slope_triangle" else None)
         end_v = g.get("end", g.get("y_end") if kind == "span_v" else None)
         anchor_v = g.get("anchor_pos", g.get("x") if kind == "span_v" else None)
+        x_val = g.get("x", g.get("x_start", g.get("x1", anchor_v if kind == "span_v" else None)))
+        x2_val = g.get("x2", g.get("x_end") if kind in ("sig_bracket", "slope_triangle") else None)
+        y_val = g.get("y", g.get("y_start") if kind == "slope_triangle" else None)
         ls = g.get("line_style", g.get("linestyle", "dashed" if kind in ("vline", "hline") else "solid"))
+        default_col = "#111111" if kind in ("sig_bracket", "slope_triangle") else "#3E86DE"
+        default_kind_lw = 1.6 if kind in ("sig_bracket", "slope_triangle") else (1.8 if kind.startswith("span") else default_lw)
         out.append(
             GuideSpec(
                 kind=kind,
@@ -841,17 +1062,20 @@ def _build_guides_from_cfg(guides_cfg: Sequence[Dict[str, Any]], theme: Dict[str
                 start=start_v,
                 end=end_v,
                 anchor_pos=anchor_v,
-                x=g.get("x", anchor_v if kind == "span_v" else None),
-                y=g.get("y"),
+                x=x_val,
+                x2=x2_val,
+                y=y_val,
                 x_end=g.get("x_end"),
                 y_end=g.get("y_end") if kind != "span_v" else None,
+                tip_drop=g.get("tip_drop"),
                 label=str(g.get("label", "")),
-                color=g.get("color", "#3E86DE"),
+                color=g.get("color", default_col),
                 line_style=ls,
-                line_width_pt=float(g.get("line_width_pt", 1.8 if kind.startswith("span") else default_lw)),
+                line_width_pt=float(g.get("line_width_pt", default_kind_lw)),
                 font_size_pt=float(g.get("font_size_pt", default_fs)),
                 shoulder_y_frac=float(g.get("shoulder_y_frac", default_y_frac)),
                 label_side=g.get("label_side", "right"),
+                meta=dict(g.get("meta") or {}),
             )
         )
     return out
@@ -1052,6 +1276,7 @@ def _compile_bar_grouped_gradient(
         output_dir=cfg.get("output_dir"),
         build_opju=bool(cfg.get("build_opju", True)),
         template_override=cfg.get("template_override"),
+        meta=dict(cfg.get("meta") or {}),
     )
 
 
@@ -1189,6 +1414,7 @@ def _compile_bar_stacked(
         output_dir=cfg.get("output_dir"),
         build_opju=bool(cfg.get("build_opju", True)),
         template_override=cfg.get("template_override"),
+        meta=dict(cfg.get("meta") or {}),
     )
 
 
@@ -1504,6 +1730,7 @@ def _compile_dual_y_combo(
         output_dir=cfg.get("output_dir"),
         build_opju=bool(cfg.get("build_opju", True)),
         template_override=cfg.get("template_override"),
+        meta=dict(cfg.get("meta") or {}),
     )
 
 
@@ -1649,6 +1876,7 @@ def _compile_curve_with_inset(
         output_dir=cfg.get("output_dir"),
         build_opju=bool(cfg.get("build_opju", True)),
         template_override=cfg.get("template_override"),
+        meta=dict(cfg.get("meta") or {}),
     )
 
 
@@ -2120,6 +2348,7 @@ def _compile_contour_pseudocolor_2d(
         output_dir=cfg.get("output_dir"),
         build_opju=bool(cfg.get("build_opju", True)),
         template_override=cfg.get("template_override"),
+        meta=dict(cfg.get("meta") or {}),
     )
 
 
@@ -2142,6 +2371,9 @@ def _compile_universal_chart_grammar(
     default_lw = comp_lw if is_multi else float(theme.get("figure_box_linewidth", 3.0))
 
     compiled_panels: List[PanelSpec] = []
+    fig_meta: Dict[str, Any] = dict(cfg.get("meta") or {})
+    if "locale" in cfg:
+        fig_meta["locale"] = str(cfg["locale"])
     for p_idx, p_cfg in enumerate(raw_panels):
         pid = p_cfg.get("panel_id", f"panel_{chr(ord('a') + p_idx)}")
         tag = p_cfg.get("tag", chr(ord("a") + p_idx) if is_multi else None)
@@ -2161,6 +2393,9 @@ def _compile_universal_chart_grammar(
             p_built.box_linewidth_pt = float(p_cfg.get("box_linewidth_pt", default_lw))
             p_built.share_x_with = p_cfg.get("share_x_with")
             p_built.share_y_with = p_cfg.get("share_y_with")
+            if sub_fig.meta:
+                for mk, mv in sub_fig.meta.items():
+                    fig_meta.setdefault(mk, mv)
             p_built.validate()
             compiled_panels.append(p_built)
             continue
@@ -2218,6 +2453,8 @@ def _compile_universal_chart_grammar(
             limits=tuple(x_cfg["limits"]) if x_cfg.get("limits") is not None else None,
             invert=bool(x_cfg.get("invert", False)),
             categories=x_cfg.get("categories", cats_found),
+            breaks=x_cfg.get("breaks", p_cfg.get("x_breaks", [])),
+            linked_top=x_cfg.get("linked_top", p_cfg.get("linked_top_x")),
         )
         right_col = (
             ot.normalize_hex(y2_cfg["color"])
@@ -2231,7 +2468,9 @@ def _compile_universal_chart_grammar(
             axis_kind=y1_cfg.get("axis_kind", "dual_y_left" if has_y2 else "quantitative"),
             scale=y1_cfg.get("scale", "linear"),
             limits=tuple(y1_cfg["limits"]) if y1_cfg.get("limits") is not None else None,
+            invert=bool(y1_cfg.get("invert", False)),
             color=y1_cfg.get("color", "#111111"),
+            breaks=y1_cfg.get("breaks", p_cfg.get("y_breaks", [])),
         )
         y2_ax = None
         if has_y2 or y2_cfg is not None:
@@ -2244,6 +2483,7 @@ def _compile_universal_chart_grammar(
                 scale=y2_d.get("scale", "linear"),
                 limits=tuple(y2_d["limits"]) if y2_d.get("limits") is not None else None,
                 color=right_col,
+                breaks=y2_d.get("breaks", []),
             )
 
         insets = [InsetSpec.from_dict(ins) for ins in p_cfg.get("insets", [])]
@@ -2257,6 +2497,7 @@ def _compile_universal_chart_grammar(
                 col=int(p_cfg.get("col", p_idx % ncols)),
                 row_span=int(p_cfg.get("row_span", 1)),
                 col_span=int(p_cfg.get("col_span", 1)),
+                coord=str(p_cfg.get("coord", "cartesian")),
                 x_axis=x_ax,
                 y1_axis=y1_ax,
                 y2_axis=y2_ax,
@@ -2269,6 +2510,7 @@ def _compile_universal_chart_grammar(
                 box_linewidth_pt=float(p_cfg.get("box_linewidth_pt", default_lw)),
                 share_x_with=p_cfg.get("share_x_with"),
                 share_y_with=p_cfg.get("share_y_with"),
+                meta=dict(p_cfg.get("meta") or {}),
             )
         )
 
@@ -2276,6 +2518,7 @@ def _compile_universal_chart_grammar(
         title=cfg.get("title", "Declarative_Chart_Grammar"),
         mode="chart_grammar",
         style_preset=cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET),
+        journal_spec=cfg.get("journal_spec"),
         theme=theme,
         nrows=nrows,
         ncols=ncols,
@@ -2287,6 +2530,7 @@ def _compile_universal_chart_grammar(
         output_dir=cfg.get("output_dir"),
         build_opju=bool(cfg.get("build_opju", True)),
         template_override=cfg.get("template_override"),
+        meta=fig_meta,
     )
 
 
@@ -2306,37 +2550,63 @@ def _compile_xy_fit_and_band(
     loaded_tables: Optional[Dict[str, Any]],
 ) -> "FigureSpec":
     """
-    Scatter + regression fit curve + 95% CI shaded band (xy_fit_and_band mode).
-    Two subtypes:
-      - "scatter_fit"  (default): scatter points + fitted line + CI band
-      - "band_only": multi-series mean lines with y_low/y_high half-transparent bands
+    Scatter + scientific curve fit + 95% CI shaded band (`xy_fit_and_band` / `dose_response_4pl`).
+    Supports all `curve_models.SUPPORTED_CURVE_MODELS` ('linear', 'poly2', 'poly3', 'power',
+    'exp_decay', 'arrhenius', 'michaelis_menten', 'dose_response_4pl', 'langmuir') across
+    `>= 1` experimental series, plus subtype='band_only' for pre-computed CI bands.
     """
-    import sys as _sys, importlib as _il
-    _et_path = str(Path(__file__).resolve().parent)
-    if _et_path not in _sys.path:
-        _sys.path.insert(0, _et_path)
-    _et = _il.import_module("electrochem_transforms")
-    fit_xy_with_ci95 = _et.fit_xy_with_ci95
+    import importlib as _il
 
-    title = str(cfg.get("title", "xy_fit"))
+    _sc_path = str(Path(__file__).resolve().parent)
+    if _sc_path not in sys.path:
+        sys.path.insert(0, _sc_path)
+    _cm = _il.import_module("curve_models")
+    fit_curve_with_ci95 = _cm.fit_curve_with_ci95
+
+    raw_mode = str(cfg.get("mode") or "xy_fit_and_band").strip()
+    is_4pl_mode = raw_mode == "dose_response_4pl"
+    model = str(
+        cfg.get("model")
+        or cfg.get("fit_model")
+        or ("dose_response_4pl" if is_4pl_mode else "linear")
+    ).strip().lower()
+    if model == "4pl":
+        model = "dose_response_4pl"
+
+    title = str(cfg.get("title", "Dose_Response_4PL" if model == "dose_response_4pl" else "xy_fit"))
     style_name = str(cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET))
-    x_label = str(cfg.get("x_label", "x"))
-    y_label = str(cfg.get("y_label", "y"))
-    model = str(cfg.get("model") or cfg.get("fit_model") or "linear")
+    default_xlab = "Concentration (nM)" if model == "dose_response_4pl" else "x"
+    default_ylab = "Cell Viability (%)" if model == "dose_response_4pl" else "y"
+    x_label = str(cfg.get("x_label", default_xlab))
+    y_label = str(cfg.get("y_label", default_ylab))
+    default_xscale = "log10" if model == "dose_response_4pl" else "linear"
+    x_scale = str(cfg.get("x_scale", default_xscale)).strip().lower()
+    if x_scale == "log":
+        x_scale = "log10"
+    y_scale = str(cfg.get("y_scale", "linear")).strip().lower()
+
     n_grid = int(cfg.get("n_grid", 200))
     ci_level = float(cfg.get("ci_level", 0.95))
-    color = str(cfg.get("color", ot.SEMANTIC_PALETTE["blue"]))
     subtype = str(cfg.get("subtype", "scatter_fit"))
     output_dir = cfg.get("output_dir")
     build_opju = bool(cfg.get("build_opju", True))
+    locale = str(cfg.get("locale", "en"))
 
     series_specs: List[SeriesSpec] = []
-    panel_meta: Dict[str, Any] = {}
+    panel_meta: Dict[str, Any] = {"locale": locale}
+    fig_meta: Dict[str, Any] = dict(cfg.get("meta") or {})
+    if "locale" in cfg or is_4pl_mode or model not in ("linear", "poly2", "power"):
+        fig_meta["locale"] = locale
+
+    guides: List[GuideSpec] = []
+    color_scheme = str(cfg.get("color_scheme", "paired_semantic"))
 
     if subtype == "band_only":
         raw_series = cfg.get("series", [])
         n_s = len(raw_series) or 1
-        palette = ot.resolve_series_colors(n_s, scheme=cfg.get("color_scheme", "sequential_blue_red"))
+        b_scheme = str(cfg.get("color_scheme", "sequential_blue_red"))
+        palette = ot.resolve_series_colors(n_s, scheme=b_scheme)
+        color_scheme = b_scheme
         for i, s in enumerate(raw_series):
             sc = str(s.get("color", palette[i % len(palette)]))
             x_vals = _as_float_list(s.get("x"), "x")
@@ -2360,77 +2630,298 @@ def _compile_xy_fit_and_band(
                 meta={"mark_override": "line_band"},
             ))
     else:
-        x_raw = _as_float_list(cfg.get("x"), "x")
-        y_raw = _as_float_list(cfg.get("y"), "y")
-        raw_series = cfg.get("series", [])
-        if (x_raw is None or y_raw is None) and raw_series and isinstance(raw_series[0], dict):
-            s0 = raw_series[0]
-            x_raw = _as_float_list(s0.get("x"), "x")
-            y_raw = _as_float_list(s0.get("y"), "y")
-            if s0.get("color"):
-                color = str(s0["color"])
-        if x_raw is None or y_raw is None:
-            raise ValueError("xy_fit_and_band requires 'x' and 'y' arrays in config (or in series[0])")
-        scatter_name = str(cfg.get("scatter_name", "Experimental"))
-        fit_name = str(cfg.get("fit_name", f"{model.capitalize()} Fit (95% CI)"))
-        series_specs.append(SeriesSpec(
-            name=scatter_name,
-            x=x_raw,
-            y=y_raw,
-            role="raw",
-            color=color,
-            marker_style=str(cfg.get("marker_style", "circle_solid")),
-            marker_size_pt=float(cfg.get("marker_size_pt", 7.5)),
-            line_style="none",
-        ))
-        fit = fit_xy_with_ci95(x_raw, y_raw, model=model, n_grid=n_grid, ci_level=ci_level)
-        x_fit = fit["x_fit"]
-        y_fit_list = fit["y_fit"]
-        y_low = fit["y_low"]
-        y_high = fit["y_high"]
-        annotation = fit["equation_str"] + f"  R²={fit['r2']:.4f}"
-        panel_meta["regression_equation"] = fit["equation_str"]
-        panel_meta["r_squared"] = f"{fit['r2']:.4f}"
-        series_specs.append(SeriesSpec(
-            name=fit_name,
-            x=x_fit,
-            y=y_fit_list,
-            y_low=y_low,
-            y_high=y_high,
-            role="fit",
-            color=color,
-            line_style="solid",
-            line_width_pt=float(cfg.get("line_width_pt", theme.get("curve_linewidth", 3.0))),
-            marker_style="none",
-            meta={
-                "mark_override": "line_band",
-                "annotation": annotation,
+        raw_series_list = list(cfg.get("series") or [])
+        groups_to_fit: List[Dict[str, Any]] = []
+        if raw_series_list and isinstance(raw_series_list[0], dict):
+            for idx, s_dict in enumerate(raw_series_list):
+                sx = _as_float_list(s_dict.get("x", cfg.get("x")), f"series[{idx}].x")
+                sy_raw = s_dict.get("y") if s_dict.get("y") is not None else s_dict.get("values")
+                s_err = _as_float_list(s_dict.get("y_err", s_dict.get("errors")), f"series[{idx}].y_err")
+                # Support replicate matrix (n_conc x n_rep or list of replicate vectors) if supplied
+                if sy_raw is None and isinstance(s_dict.get("replicates"), (list, tuple)) and sx is not None:
+                    reps = s_dict["replicates"]
+                    if reps and isinstance(reps[0], (list, tuple)):
+                        # Detect shape: len(reps) == len(sx) -> per-x replicates; else replicate curves
+                        if len(reps) == len(sx):
+                            per_x = [[float(v) for v in row] for row in reps]
+                        else:
+                            per_x = [[float(reps[r][c]) for r in range(len(reps))] for c in range(len(sx))]
+                        sy = [sum(r) / len(r) for r in per_x]
+                        s_err = [
+                            math.sqrt(sum((v - m) ** 2 for v in r) / max(len(r) - 1, 1)) if len(r) > 1 else 0.0
+                            for r, m in zip(per_x, sy)
+                        ]
+                        fit_x = [ xv_i for xv_i, r in zip(sx, per_x) for _ in r ]
+                        fit_y = [ v for r in per_x for v in r ]
+                    else:
+                        sy = _as_float_list(reps, f"series[{idx}].replicates")
+                        fit_x, fit_y = sx, sy
+                else:
+                    sy = _as_float_list(sy_raw, f"series[{idx}].y")
+                    fit_x, fit_y = sx, sy
+                if sx is None or sy is None:
+                    raise ValueError(f"xy_fit_and_band series[{idx}] requires numeric 'x' and 'y' arrays.")
+                groups_to_fit.append(
+                    {
+                        "name": s_dict.get("name"),
+                        "scatter_name": s_dict.get("scatter_name"),
+                        "fit_name": s_dict.get("fit_name"),
+                        "x": sx,
+                        "y": sy,
+                        "fit_x": fit_x,
+                        "fit_y": fit_y,
+                        "y_err": s_err,
+                        "color": s_dict.get("color"),
+                        "role": s_dict.get("role"),
+                        "marker_style": s_dict.get("marker_style"),
+                        "marker_size_pt": s_dict.get("marker_size_pt"),
+                        "line_width_pt": s_dict.get("line_width_pt"),
+                    }
+                )
+        else:
+            x_raw = _as_float_list(cfg.get("x"), "x")
+            y_raw = _as_float_list(cfg.get("y"), "y")
+            if (x_raw is None or y_raw is None) and loaded_tables:
+                tbl = _lookup_loaded_table(loaded_tables, cfg.get("table_key"), cfg.get("input_file"), "main")
+                if tbl is not None and cfg.get("x_col") is not None and cfg.get("y_col") is not None:
+                    x_raw = _as_float_list(_extract_column_from_table(tbl, cfg.get("x_col")), "x")
+                    y_raw = _as_float_list(_extract_column_from_table(tbl, cfg.get("y_col")), "y")
+            if x_raw is None or y_raw is None:
+                raise ValueError(f"{raw_mode} requires 'x' and 'y' arrays in config (or in 'series').")
+            groups_to_fit.append(
+                {
+                    "name": cfg.get("name"),
+                    "scatter_name": cfg.get("scatter_name"),
+                    "fit_name": cfg.get("fit_name"),
+                    "x": x_raw,
+                    "y": y_raw,
+                    "fit_x": x_raw,
+                    "fit_y": y_raw,
+                    "y_err": _as_float_list(cfg.get("y_err"), "y_err"),
+                    "color": cfg.get("color", ot.SEMANTIC_PALETTE["blue"]),
+                    "role": cfg.get("role"),
+                    "marker_style": cfg.get("marker_style"),
+                    "marker_size_pt": cfg.get("marker_size_pt"),
+                    "line_width_pt": cfg.get("line_width_pt"),
+                }
+            )
+
+        n_groups = len(groups_to_fit)
+        roles = [g.get("role") for g in groups_to_fit]
+        has_roles = any(r is not None for r in roles)
+        resolved_cols = ot.resolve_series_colors(
+            n_groups,
+            roles=(roles if has_roles else None),
+            scheme=color_scheme,
+        )
+
+        curve_fits_list: List[Dict[str, Any]] = []
+        for idx, g_item in enumerate(groups_to_fit):
+            if g_item.get("color"):
+                g_color = ot.normalize_hex(str(g_item["color"]))
+            elif n_groups == 1 and cfg.get("color"):
+                g_color = ot.normalize_hex(str(cfg["color"]))
+            else:
+                g_color = resolved_cols[idx % len(resolved_cols)]
+
+            raw_nm = g_item.get("name")
+            grp_name = (
+                ot.clean_semantic_sample_name(str(raw_nm), bool(cfg.get("clean_sample_prefix", False)))
+                if raw_nm
+                else ("Experimental" if n_groups == 1 else f"Group {idx + 1}")
+            )
+            if n_groups == 1 and not is_4pl_mode and not raw_nm:
+                scatter_name = str(g_item.get("scatter_name") or cfg.get("scatter_name") or "Experimental")
+                fit_name = str(g_item.get("fit_name") or cfg.get("fit_name") or f"{model.capitalize()} Fit (95% CI)")
+            else:
+                scatter_name = str(g_item.get("scatter_name") or grp_name)
+                default_fn = f"{scatter_name} (4PL Fit)" if model == "dose_response_4pl" else f"{scatter_name} Fit (95% CI)"
+                fit_name = str(g_item.get("fit_name") or default_fn)
+
+            fit = fit_curve_with_ci95(
+                g_item["fit_x"],
+                g_item["fit_y"],
+                model=model,
+                n_grid=n_grid,
+                ci_level=ci_level,
+                x_scale=x_scale,
+                T_in_kelvin=cfg.get("T_in_kelvin"),
+            )
+            x_fit = fit["x_grid"]
+            y_fit_list = fit["y_fit"]
+            y_low = fit["y_low"]
+            y_high = fit["y_high"]
+            eq_str = fit["equation_text"]
+            km = dict(fit.get("key_metrics") or {})
+
+            if model == "dose_response_4pl" and "IC50" in km:
+                ann_str = f"{grp_name}: IC50 = {km['IC50']:.3g}, R²={fit['r2']:.4f}" if n_groups > 1 else f"IC50 = {km['IC50']:.3g}  R²={fit['r2']:.4f}"
+            else:
+                ann_str = f"{eq_str}  R²={fit['r2']:.4f}"
+
+            fit_record = {
+                "name": grp_name,
+                "color": g_color,
+                "model": fit["model"],
+                "params": fit["params"],
+                "param_se": fit["param_se"],
                 "r2": fit["r2"],
-                "equation_str": fit["equation_str"],
-            },
-        ))
+                "adj_r2": fit["adj_r2"],
+                "aic": fit["aic"],
+                "bic": fit["bic"],
+                "rmse": fit["rmse"],
+                "equation_text": eq_str,
+                "origin_rich_eq": fit.get("origin_rich_eq", ""),
+                "key_metrics": km,
+            }
+            curve_fits_list.append(fit_record)
+
+            series_specs.append(
+                SeriesSpec(
+                    name=scatter_name,
+                    x=g_item["x"],
+                    y=g_item["y"],
+                    y_err=g_item.get("y_err"),
+                    role="raw",
+                    color=g_color,
+                    marker_style=str(g_item.get("marker_style") or cfg.get("marker_style") or "circle_solid"),
+                    marker_size_pt=float(g_item.get("marker_size_pt") or cfg.get("marker_size_pt") or 7.5),
+                    line_style="none",
+                    meta={
+                        "series_group": grp_name,
+                        "group_index": idx,
+                        "error_type": str(cfg.get("error_bar", "SD")) if g_item.get("y_err") else None,
+                    },
+                )
+            )
+            series_specs.append(
+                SeriesSpec(
+                    name=fit_name,
+                    x=x_fit,
+                    y=y_fit_list,
+                    y_low=y_low,
+                    y_high=y_high,
+                    role="fit",
+                    color=g_color,
+                    line_style="solid",
+                    line_width_pt=float(g_item.get("line_width_pt") or cfg.get("line_width_pt") or theme.get("curve_linewidth", 3.0)),
+                    marker_style="none",
+                    meta={
+                        "mark_override": "line_band",
+                        "series_group": grp_name,
+                        "group_index": idx,
+                        "annotation": ann_str,
+                        "r2": fit["r2"],
+                        "equation_str": eq_str,
+                        "origin_rich_eq": fit.get("origin_rich_eq", ""),
+                        "key_metrics": km,
+                    },
+                )
+            )
+
+        panel_meta["curve_fits"] = curve_fits_list
+        fig_meta["curve_fits"] = curve_fits_list
+        if len(curve_fits_list) == 1:
+            cf0 = curve_fits_list[0]
+            if model == "dose_response_4pl" and "IC50" in cf0["key_metrics"]:
+                panel_meta["regression_equation"] = cf0["origin_rich_eq"] or f"IC50 = {cf0['key_metrics']['IC50']:.4g}"
+            else:
+                panel_meta["regression_equation"] = cf0["equation_text"]
+            panel_meta["r_squared"] = f"{cf0['r2']:.4f}"
+        else:
+            if model == "dose_response_4pl":
+                ic50_parts = [
+                    f"{cf['name']}: IC\\-(50) = {cf['key_metrics']['IC50']:.3g}"
+                    for cf in curve_fits_list
+                    if "IC50" in cf.get("key_metrics", {})
+                ]
+                panel_meta["regression_equation"] = ";  ".join(ic50_parts)
+                panel_meta["r_squared"] = f"{curve_fits_list[0]['r2']:.4f}"
+            else:
+                panel_meta["regression_equation"] = curve_fits_list[0]["equation_text"]
+                panel_meta["r_squared"] = f"{curve_fits_list[0]['r2']:.4f}"
+
+        # Auto-attach IC50 horizontal & vertical dashed drop-line guides for 4PL
+        if model == "dose_response_4pl" and bool(cfg.get("show_ic50_guides", True)):
+            valid_4pl = [cf for cf in curve_fits_list if cf.get("key_metrics", {}).get("IC50") is not None]
+            if valid_4pl:
+                if cfg.get("ic50_ref_y") is not None:
+                    ref_y = float(cfg["ic50_ref_y"])
+                else:
+                    spans_50 = all(
+                        min(cf["key_metrics"].get("bottom", 0.0), cf["key_metrics"].get("top", 100.0)) - 5.0
+                        <= 50.0
+                        <= max(cf["key_metrics"].get("bottom", 0.0), cf["key_metrics"].get("top", 100.0)) + 5.0
+                        for cf in valid_4pl
+                    )
+                    ref_y = 50.0 if spans_50 else float(valid_4pl[0]["key_metrics"].get("mid_y", 50.0))
+                guides.append(
+                    GuideSpec(
+                        kind="hline",
+                        value=ref_y,
+                        color="#666666",
+                        line_style="dashed",
+                        line_width_pt=1.5,
+                        label=str(cfg.get("ic50_hline_label", "")),
+                        meta={"guide_role": "ic50_mid_response"},
+                    )
+                )
+                for cf in valid_4pl:
+                    ic50_val = float(cf["key_metrics"]["IC50"])
+                    if ic50_val > 0.0 or x_scale != "log10":
+                        guides.append(
+                            GuideSpec(
+                                kind="vline",
+                                value=ic50_val,
+                                color=cf["color"],
+                                line_style="dashed",
+                                line_width_pt=1.6,
+                                label=f"IC50 = {ic50_val:.3g}",
+                                meta={
+                                    "guide_role": "ic50_drop",
+                                    "series": cf["name"],
+                                    "ic50": ic50_val,
+                                    "mid_y": float(cf["key_metrics"].get("mid_y", ref_y)),
+                                    "ref_y": ref_y,
+                                },
+                            )
+                        )
+
+    if cfg.get("guides"):
+        guides.extend(_build_guides_from_cfg(cfg["guides"], theme))
 
     layer = LayerSpec(
         layer_id="xy_fit_main",
         mark="line_band",
         series=series_specs,
-        color_scheme="paired_semantic",
+        color_scheme=color_scheme,
     )
-    x_axis = AxisSpec(which="x", label=x_label, scale=str(cfg.get("x_scale", "linear")))
-    y1_axis = AxisSpec(which="y1", label=y_label, scale=str(cfg.get("y_scale", "linear")))
+    x_axis = AxisSpec(
+        which="x",
+        label=x_label,
+        scale=x_scale,
+        limits=tuple(cfg["x_limits"]) if cfg.get("x_limits") is not None else None,
+    )
+    y1_axis = AxisSpec(
+        which="y1",
+        label=y_label,
+        scale=y_scale,
+        limits=tuple(cfg["y_limits"]) if cfg.get("y_limits") is not None else None,
+    )
     panel = PanelSpec(
         panel_id="panel_main",
         tag=str(cfg.get("tag", "a")),
         x_axis=x_axis,
         y1_axis=y1_axis,
         layers=[layer],
+        guides=guides,
         box_linewidth_pt=float(theme.get("figure_box_linewidth", 3.0)),
-        legend_style=str(cfg.get("legend_style", "corner_upper_left")),
+        legend_style=str(cfg.get("legend_style", "corner_upper_right" if model == "dose_response_4pl" else "corner_upper_left")),
         meta=panel_meta,
     )
     return FigureSpec(
         title=title,
-        mode="xy_fit_and_band",
+        mode="dose_response_4pl" if is_4pl_mode else "xy_fit_and_band",
         subtype=subtype,
         style_preset=style_name,
         theme=theme,
@@ -2439,7 +2930,22 @@ def _compile_xy_fit_and_band(
         panels=[panel],
         output_dir=output_dir,
         build_opju=build_opju,
+        meta=fig_meta,
     )
+
+
+def _compile_dose_response_4pl(
+    cfg: Dict[str, Any],
+    theme: Dict[str, Any],
+    loaded_tables: Optional[Dict[str, Any]],
+) -> "FigureSpec":
+    """Dedicated compiler entry point for `mode == 'dose_response_4pl'`."""
+    sub_cfg = copy.deepcopy(cfg)
+    sub_cfg["mode"] = "dose_response_4pl"
+    sub_cfg.setdefault("model", "dose_response_4pl")
+    sub_cfg.setdefault("x_scale", "log10")
+    sub_cfg.setdefault("locale", "en")
+    return _compile_xy_fit_and_band(sub_cfg, theme, loaded_tables)
 
 
 def _compile_bode_dual_panel(
@@ -3007,6 +3513,2802 @@ def compute_isometric_4_3_bounds(
     return (round(x0, 6), round(x0 + 4.0 * step, 6)), (round(y0, 6), round(y0 + 3.0 * step, 6)), step
 
 
+def _extract_multi_group_replicates(
+    cfg: Dict[str, Any],
+    loaded_tables: Optional[Dict[str, Any]],
+    stat_engine_mod: Any,
+) -> List[Dict[str, Any]]:
+    """
+    Normalize multi-group replicate inputs from `cfg['groups']` (dict or list of dicts),
+    `cfg['series']`, `cfg['rows']`, `loaded_tables`, or `cfg['input_file']` into an ordered
+    list of `{'name': str, 'values': List[float], 'role': Optional[str], 'color': Optional[str]}`.
+    """
+    clean_prefix = bool(cfg.get("clean_sample_prefix", False))
+    label_map = cfg.get("label_map") or {}
+    out: List[Dict[str, Any]] = []
+
+    raw_groups = cfg.get("groups")
+    if isinstance(raw_groups, dict):
+        for g_key, g_vals in raw_groups.items():
+            nm = str(label_map.get(g_key, ot.clean_semantic_sample_name(str(g_key), clean_prefix)))
+            if isinstance(g_vals, dict):
+                vals = _as_float_list(
+                    g_vals.get("values") if g_vals.get("values") is not None else (g_vals.get("y") if g_vals.get("y") is not None else g_vals.get("raw_points")),
+                    f"groups[{g_key!r}]",
+                ) or []
+                out.append({"name": nm, "values": vals, "role": g_vals.get("role"), "color": g_vals.get("color")})
+            else:
+                vals = _as_float_list(g_vals, f"groups[{g_key!r}]") or []
+                out.append({"name": nm, "values": vals, "role": None, "color": None})
+    elif isinstance(raw_groups, (list, tuple)) and raw_groups:
+        for idx, item in enumerate(raw_groups):
+            if isinstance(item, dict):
+                raw_nm = str(item.get("name", item.get("group", f"Group {idx + 1}")))
+                nm = str(label_map.get(raw_nm, ot.clean_semantic_sample_name(raw_nm, clean_prefix)))
+                v_seq = (
+                    item.get("values")
+                    if item.get("values") is not None
+                    else (item.get("y") if item.get("y") is not None else item.get("raw_points"))
+                )
+                vals = _as_float_list(v_seq, f"groups[{idx}]") or []
+                out.append({"name": nm, "values": vals, "role": item.get("role"), "color": item.get("color")})
+
+    if not out and isinstance(cfg.get("series"), (list, tuple)):
+        for idx, s_item in enumerate(cfg["series"]):
+            if isinstance(s_item, dict):
+                raw_nm = str(s_item.get("name", s_item.get("group", f"Group {idx + 1}")))
+                nm = str(label_map.get(raw_nm, ot.clean_semantic_sample_name(raw_nm, clean_prefix)))
+                v_seq = (
+                    s_item.get("values")
+                    if s_item.get("values") is not None
+                    else (s_item.get("y") if s_item.get("y") is not None else s_item.get("raw_points"))
+                )
+                vals = _as_float_list(v_seq, f"series[{idx}]") or []
+                out.append({"name": nm, "values": vals, "role": s_item.get("role"), "color": s_item.get("color")})
+
+    group_col = cfg.get("group_col")
+    value_col = cfg.get("value_col")
+    bio_unit_col = cfg.get("bio_unit_col")
+
+    if not out and cfg.get("rows") is not None and group_col and value_col:
+        agg = stat_engine_mod.aggregate_replicates(cfg["rows"], group_col, value_col, bio_unit_col=bio_unit_col)
+        for g_key, vals in agg.items():
+            nm = str(label_map.get(g_key, ot.clean_semantic_sample_name(str(g_key), clean_prefix)))
+            out.append({"name": nm, "values": [float(v) for v in vals], "role": None, "color": None})
+
+    if not out:
+        tbl = _lookup_loaded_table(loaded_tables, cfg.get("table_key"), cfg.get("input_file"), "main")
+        if tbl is None and cfg.get("input_file"):
+            import importlib as _il
+
+            _et = _il.import_module("electrochem_transforms")
+            tbl = _et.load_tabular_sheet(
+                cfg["input_file"],
+                sheet=cfg.get("sheet", 0),
+                header_row=cfg.get("header_row", 0),
+            )
+        if tbl is not None:
+            if group_col and value_col:
+                agg = stat_engine_mod.aggregate_replicates(tbl, group_col, value_col, bio_unit_col=bio_unit_col)
+                for g_key, vals in agg.items():
+                    nm = str(label_map.get(g_key, ot.clean_semantic_sample_name(str(g_key), clean_prefix)))
+                    out.append({"name": nm, "values": [float(v) for v in vals], "role": None, "color": None})
+            elif hasattr(tbl, "columns"):
+                import pandas as _pd
+
+                for col_nm in tbl.columns:
+                    vals = _pd.to_numeric(tbl[col_nm], errors="coerce").dropna().tolist()
+                    if vals:
+                        nm = str(label_map.get(str(col_nm), ot.clean_semantic_sample_name(str(col_nm), clean_prefix)))
+                        out.append({"name": nm, "values": [float(v) for v in vals], "role": None, "color": None})
+
+    out = [g for g in out if len(g["values"]) > 0]
+    if not out:
+        raise ValueError(f"Mode {cfg.get('mode')!r} requires non-empty multi-group replicate data in 'groups' or 'series'.")
+    return out
+
+
+def _build_sig_bracket_guides(
+    brackets: Sequence[Dict[str, Any]],
+    *,
+    color: str = "#111111",
+    line_width_pt: float = 1.6,
+    font_size_pt: float = 20.0,
+) -> List[GuideSpec]:
+    """Convert `stat_engine.compute_sig_bracket_tiers` output dicts into `GuideSpec(kind='sig_bracket')`."""
+    guides: List[GuideSpec] = []
+    for br in brackets:
+        guides.append(
+            GuideSpec(
+                kind="sig_bracket",
+                axis="y1",
+                value=float(br["y_bar"]),
+                x=float(br["x1"]),
+                x2=float(br["x2"]),
+                tip_drop=float(br["tip_drop"]),
+                label=str(br.get("label") or br.get("stars") or ""),
+                color=color,
+                line_style="solid",
+                line_width_pt=line_width_pt,
+                font_size_pt=font_size_pt,
+                meta=dict(br),
+            )
+        )
+    return guides
+
+
+def _compile_stat_bar_dot_sig(
+    cfg: Dict[str, Any],
+    theme: Dict[str, Any],
+    loaded_tables: Optional[Dict[str, Any]],
+) -> "FigureSpec":
+    """
+    Compile `stat_bar_dot_sig`: mean±SD/SEM/CI95 column bars overlaid with individual replicate
+    dots (`LayerSpec(mark='bar_dot_error')`) and auto-computed significance brackets (`sig_bracket`).
+    """
+    import importlib as _il
+
+    _sc_path = str(Path(__file__).resolve().parent)
+    if _sc_path not in sys.path:
+        sys.path.insert(0, _sc_path)
+    _se = _il.import_module("stat_engine")
+
+    group_items = _extract_multi_group_replicates(cfg, loaded_tables, _se)
+    group_names = [g["name"] for g in group_items]
+    groups_map = {g["name"]: g["values"] for g in group_items}
+    n_groups = len(group_items)
+
+    err_type = str(cfg.get("error_bar") or cfg.get("error_type") or "SD").strip().upper()
+    if err_type not in ("SD", "SEM", "CI95", "95% CI"):
+        raise ValueError(f"Unsupported error_bar={err_type!r} in 'stat_bar_dot_sig'; expected 'SD', 'SEM', or 'CI95'.")
+
+    paired = bool(cfg.get("paired", False))
+    control_group = cfg.get("control_group")
+    p_adjust = str(cfg.get("p_adjust", "fdr_bh"))
+    alpha = float(cfg.get("alpha", 0.05))
+    raw_pairs = cfg.get("pairs")
+    pairs = [tuple(p) for p in raw_pairs] if raw_pairs is not None else None
+    hide_ns = bool(cfg.get("hide_ns", True))
+    max_brackets = int(cfg.get("max_brackets", 6))
+    show_stats = bool(cfg.get("show_stats", True))
+    locale = str(cfg.get("locale", "en"))
+
+    if n_groups >= 2:
+        stat_report = _se.run_group_comparisons(
+            groups_map,
+            paired=paired,
+            control_group=control_group,
+            p_adjust=p_adjust,
+            alpha=alpha,
+            pairs=pairs,
+        )
+    else:
+        stat_report = {
+            "omnibus_test": "none",
+            "omnibus_stat": 0.0,
+            "omnibus_p": 1.0,
+            "parametric": True,
+            "homoscedastic": True,
+            "levene_p": 1.0,
+            "p_adjust_method": p_adjust,
+            "summary": _se.summarize_groups(groups_map),
+            "comparisons": [],
+        }
+
+    summary_by_name = {row["group"]: row for row in stat_report["summary"]}
+    scheme = str(cfg.get("color_scheme", "paired_semantic"))
+    roles = [g.get("role") for g in group_items]
+    has_roles = any(r is not None for r in roles)
+    resolved_cols = ot.resolve_series_colors(
+        n_groups,
+        roles=(roles if has_roles else None),
+        scheme=scheme,
+    )
+
+    series_specs: List[SeriesSpec] = []
+    group_tops: List[float] = []
+    all_raw_min = min(min(g["values"]) for g in group_items)
+
+    for idx, g_item in enumerate(group_items):
+        g_name = g_item["name"]
+        vals = [float(v) for v in g_item["values"]]
+        s_row = summary_by_name[g_name]
+        mean_v = float(s_row["mean"])
+        if err_type == "SEM":
+            err_v = float(s_row["sem"])
+        elif err_type in ("CI95", "95% CI"):
+            err_v = float(s_row["ci95_half"])
+        else:
+            err_v = float(s_row["sd"])
+
+        c_hex = ot.normalize_hex(str(g_item["color"])) if g_item.get("color") else resolved_cols[idx % len(resolved_cols)]
+        grad = ot.compute_gradient_pair_and_label_color(c_hex)
+        top_v = max(max(vals), mean_v + err_v)
+        group_tops.append(top_v)
+
+        series_specs.append(
+            SeriesSpec(
+                name=g_name,
+                x=[g_name],
+                y=[mean_v],
+                y_err=[err_v],
+                role=g_item.get("role"),
+                color=c_hex,
+                gradient_top_color=grad.top_hex,
+                gradient_bottom_color=grad.bottom_hex,
+                label_color=grad.label_hex,
+                show_value_labels=bool(cfg.get("show_value_labels", False)),
+                value_format=str(cfg.get("value_format", "{:.2f}")),
+                y_unit=cfg.get("y_unit"),
+                meta={
+                    "raw_points": vals,
+                    "n": int(s_row["n"]),
+                    "error_type": "CI95" if err_type == "95% CI" else err_type,
+                    "group_index": idx,
+                    "x_pos": float(idx + 1),
+                    "mean": mean_v,
+                    "sd": float(s_row["sd"]),
+                    "sem": float(s_row["sem"]),
+                    "ci95_half": float(s_row["ci95_half"]),
+                    "median": float(s_row["median"]),
+                },
+            )
+        )
+
+    guides: List[GuideSpec] = []
+    if show_stats and stat_report.get("comparisons"):
+        bracket_tiers = _se.compute_sig_bracket_tiers(
+            stat_report["comparisons"],
+            group_names,
+            group_tops,
+            hide_ns=hide_ns,
+            max_brackets=max_brackets,
+            data_min=min(0.0, all_raw_min),
+        )
+        stat_report["brackets"] = bracket_tiers
+        guides.extend(
+            _build_sig_bracket_guides(
+                bracket_tiers,
+                color=str(cfg.get("bracket_color", "#111111")),
+                line_width_pt=float(cfg.get("bracket_linewidth_pt", theme.get("guide_linewidth", 1.6))),
+                font_size_pt=float(cfg.get("bracket_fontsize_pt", theme.get("callout_font_size", 20.0))),
+            )
+        )
+    if cfg.get("guides"):
+        guides.extend(_build_guides_from_cfg(cfg["guides"], theme))
+
+    norm_err_type = "CI95" if err_type == "95% CI" else err_type
+    layer = LayerSpec(
+        layer_id="bar_dot_sig_main",
+        mark="bar_dot_error",
+        y_axis="y1",
+        series=series_specs,
+        categories=group_names,
+        color_scheme=scheme,
+        palette_colors=[s.color for s in series_specs if s.color],
+        show_value_labels=bool(cfg.get("show_value_labels", False)),
+        style_overrides={
+            "error_type": norm_err_type,
+            "jitter_width": float(cfg.get("jitter_width", 0.13)),
+        },
+    )
+    x_axis = AxisSpec(
+        which="x",
+        label=str(cfg.get("x_label", "")),
+        axis_kind="categorical",
+        categories=group_names,
+    )
+    y1_axis = AxisSpec(
+        which="y1",
+        label=str(cfg.get("y_label", "Response")),
+        unit=cfg.get("y_unit"),
+        axis_kind="quantitative",
+        limits=tuple(cfg["y_limits"]) if cfg.get("y_limits") is not None else None,
+    )
+    panel_meta: Dict[str, Any] = {
+        "stat_report": stat_report,
+        "error_bar_type": norm_err_type,
+        "locale": locale,
+    }
+    fig_meta: Dict[str, Any] = dict(cfg.get("meta") or {})
+    fig_meta["stat_report"] = stat_report
+    fig_meta["error_bar_type"] = norm_err_type
+    fig_meta["locale"] = locale
+
+    panel = PanelSpec(
+        panel_id="panel_main",
+        tag=str(cfg.get("tag", "a")),
+        x_axis=x_axis,
+        y1_axis=y1_axis,
+        layers=[layer],
+        guides=guides,
+        box_linewidth_pt=float(theme.get("figure_box_linewidth", 3.0)),
+        legend_style=str(cfg.get("legend_style", "none")),
+        meta=panel_meta,
+    )
+    return FigureSpec(
+        title=str(cfg.get("title", "Stat_Bar_Dot_Significance")),
+        mode="stat_bar_dot_sig",
+        style_preset=str(cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET)),
+        theme=theme,
+        nrows=1,
+        ncols=1,
+        panels=[panel],
+        output_dir=cfg.get("output_dir"),
+        build_opju=bool(cfg.get("build_opju", True)),
+        summary_metrics={
+            "omnibus_test": stat_report["omnibus_test"],
+            "omnibus_p": stat_report["omnibus_p"],
+            "error_bar_type": norm_err_type,
+            "n_groups": n_groups,
+        },
+        meta=fig_meta,
+    )
+
+
+def _compile_stat_violin_raincloud(
+    cfg: Dict[str, Any],
+    theme: Dict[str, Any],
+    loaded_tables: Optional[Dict[str, Any]],
+) -> "FigureSpec":
+    """
+    Compile `stat_violin_raincloud`: multi-group raw distributions into `LayerSpec(mark='violin_box')`
+    (default `color_scheme='okabe_ito'`) + optional `sig_bracket` guides (`show_stats=True` default).
+    """
+    import importlib as _il
+
+    _sc_path = str(Path(__file__).resolve().parent)
+    if _sc_path not in sys.path:
+        sys.path.insert(0, _sc_path)
+    _se = _il.import_module("stat_engine")
+
+    group_items = _extract_multi_group_replicates(cfg, loaded_tables, _se)
+    group_names = [g["name"] for g in group_items]
+    groups_map = {g["name"]: g["values"] for g in group_items}
+    n_groups = len(group_items)
+
+    subtype = str(cfg.get("subtype", "violin_box")).strip().lower()
+    scheme = str(cfg.get("color_scheme", "okabe_ito"))
+    show_stats = bool(cfg.get("show_stats", True))
+    paired = bool(cfg.get("paired", False))
+    control_group = cfg.get("control_group")
+    p_adjust = str(cfg.get("p_adjust", "fdr_bh"))
+    alpha = float(cfg.get("alpha", 0.05))
+    raw_pairs = cfg.get("pairs")
+    pairs = [tuple(p) for p in raw_pairs] if raw_pairs is not None else None
+    hide_ns = bool(cfg.get("hide_ns", True))
+    max_brackets = int(cfg.get("max_brackets", 6))
+    locale = str(cfg.get("locale", "en"))
+
+    if n_groups >= 2:
+        stat_report = _se.run_group_comparisons(
+            groups_map,
+            paired=paired,
+            control_group=control_group,
+            p_adjust=p_adjust,
+            alpha=alpha,
+            pairs=pairs,
+        )
+    else:
+        stat_report = {
+            "omnibus_test": "none",
+            "omnibus_stat": 0.0,
+            "omnibus_p": 1.0,
+            "parametric": True,
+            "homoscedastic": True,
+            "levene_p": 1.0,
+            "p_adjust_method": p_adjust,
+            "summary": _se.summarize_groups(groups_map),
+            "comparisons": [],
+        }
+
+    summary_by_name = {row["group"]: row for row in stat_report["summary"]}
+    roles = [g.get("role") for g in group_items]
+    has_roles = any(r is not None for r in roles)
+    resolved_cols = ot.resolve_series_colors(
+        n_groups,
+        roles=(roles if has_roles else None),
+        scheme=scheme,
+    )
+
+    series_specs: List[SeriesSpec] = []
+    group_tops: List[float] = []
+    all_raw_min = min(min(g["values"]) for g in group_items)
+
+    for idx, g_item in enumerate(group_items):
+        g_name = g_item["name"]
+        vals = [float(v) for v in g_item["values"]]
+        s_row = summary_by_name[g_name]
+        c_hex = ot.normalize_hex(str(g_item["color"])) if g_item.get("color") else resolved_cols[idx % len(resolved_cols)]
+        # Add minor KDE upper tail clearance (0.25 * SD) so brackets sit cleanly above violin tips
+        kde_top = max(vals) + 0.25 * float(s_row["sd"])
+        group_tops.append(kde_top)
+
+        series_specs.append(
+            SeriesSpec(
+                name=g_name,
+                y=vals,
+                role=g_item.get("role"),
+                color=c_hex,
+                y_unit=cfg.get("y_unit"),
+                meta={
+                    "raw_points": vals,
+                    "n": int(s_row["n"]),
+                    "subtype": subtype,
+                    "group_index": idx,
+                    "label": g_name,
+                    "median": float(s_row["median"]),
+                    "iqr": float(s_row["iqr"]),
+                },
+            )
+        )
+
+    guides: List[GuideSpec] = []
+    if show_stats and stat_report.get("comparisons"):
+        bracket_tiers = _se.compute_sig_bracket_tiers(
+            stat_report["comparisons"],
+            group_names,
+            group_tops,
+            hide_ns=hide_ns,
+            max_brackets=max_brackets,
+            data_min=all_raw_min,
+        )
+        stat_report["brackets"] = bracket_tiers
+        guides.extend(
+            _build_sig_bracket_guides(
+                bracket_tiers,
+                color=str(cfg.get("bracket_color", "#111111")),
+                line_width_pt=float(cfg.get("bracket_linewidth_pt", theme.get("guide_linewidth", 1.6))),
+                font_size_pt=float(cfg.get("bracket_fontsize_pt", theme.get("callout_font_size", 20.0))),
+            )
+        )
+    if cfg.get("guides"):
+        guides.extend(_build_guides_from_cfg(cfg["guides"], theme))
+
+    layer = LayerSpec(
+        layer_id="violin_main",
+        mark="violin_box",
+        y_axis="y1",
+        series=series_specs,
+        categories=group_names,
+        color_scheme=scheme,
+        palette_colors=[s.color for s in series_specs if s.color],
+        style_overrides={"subtype": subtype},
+    )
+    x_axis = AxisSpec(
+        which="x",
+        label=str(cfg.get("x_label", "")),
+        axis_kind="categorical",
+        categories=group_names,
+    )
+    y1_axis = AxisSpec(
+        which="y1",
+        label=str(cfg.get("y_label", "Distribution")),
+        unit=cfg.get("y_unit"),
+        axis_kind="quantitative",
+        limits=tuple(cfg["y_limits"]) if cfg.get("y_limits") is not None else None,
+    )
+    panel_meta: Dict[str, Any] = {
+        "stat_report": stat_report,
+        "locale": locale,
+    }
+    fig_meta: Dict[str, Any] = dict(cfg.get("meta") or {})
+    fig_meta["stat_report"] = stat_report
+    fig_meta["locale"] = locale
+
+    panel = PanelSpec(
+        panel_id="panel_main",
+        tag=str(cfg.get("tag", "a")),
+        x_axis=x_axis,
+        y1_axis=y1_axis,
+        layers=[layer],
+        guides=guides,
+        box_linewidth_pt=float(theme.get("figure_box_linewidth", 3.0)),
+        legend_style=str(cfg.get("legend_style", "none")),
+        meta=panel_meta,
+    )
+    return FigureSpec(
+        title=str(cfg.get("title", "Stat_Violin_Distribution")),
+        mode="stat_violin_raincloud",
+        subtype=subtype,
+        style_preset=str(cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET)),
+        theme=theme,
+        nrows=1,
+        ncols=1,
+        panels=[panel],
+        output_dir=cfg.get("output_dir"),
+        build_opju=bool(cfg.get("build_opju", True)),
+        summary_metrics={
+            "omnibus_test": stat_report["omnibus_test"],
+            "omnibus_p": stat_report["omnibus_p"],
+            "n_groups": n_groups,
+        },
+        meta=fig_meta,
+    )
+
+
+def _compile_volcano_plot(
+    cfg: Dict[str, Any],
+    theme: Dict[str, Any],
+    loaded_tables: Optional[Dict[str, Any]],
+) -> "FigureSpec":
+    """
+    Compile `volcano_plot`: partitions (`log2fc`, `pval` / `neg_log10_p`) into 3 `SeriesSpec`
+    (`Down` #2B6CB0, `NS` #B8C2CC, `Up` #D84B5C) on `LayerSpec(mark='scatter')`, adds dashed
+    threshold guides, and stores top hits in `panel.meta['point_callouts']`.
+    """
+    fc_raw = cfg.get("log2fc", cfg.get("x"))
+    p_raw = cfg.get("pval", cfg.get("p_adj", cfg.get("fdr")))
+    nlp_raw = cfg.get("neg_log10_p", cfg.get("y"))
+    lbl_raw = cfg.get("genes", cfg.get("labels"))
+
+    if fc_raw is None and isinstance(cfg.get("points"), (list, tuple)):
+        pts = cfg["points"]
+        fc_raw = [pt.get("log2fc", pt.get("x")) for pt in pts]
+        if any(pt.get("neg_log10_p") is not None or pt.get("y") is not None for pt in pts):
+            nlp_raw = [pt.get("neg_log10_p", pt.get("y")) for pt in pts]
+        else:
+            p_raw = [pt.get("pval", pt.get("p_adj", pt.get("fdr"))) for pt in pts]
+        lbl_raw = [pt.get("gene", pt.get("label", pt.get("name", f"Gene_{i+1}"))) for i, pt in enumerate(pts)]
+
+    if fc_raw is None:
+        tbl = _lookup_loaded_table(loaded_tables, cfg.get("table_key"), cfg.get("input_file"), "main")
+        if tbl is None and cfg.get("input_file"):
+            import importlib as _il
+
+            _et = _il.import_module("electrochem_transforms")
+            tbl = _et.load_tabular_sheet(
+                cfg["input_file"],
+                sheet=cfg.get("sheet", 0),
+                header_row=cfg.get("header_row", 0),
+            )
+        if tbl is not None:
+            fc_col = cfg.get("fc_col", cfg.get("x_col", "log2FC"))
+            fc_raw = _extract_column_from_table(tbl, fc_col)
+            if cfg.get("neg_log10_p_col") is not None:
+                nlp_raw = _extract_column_from_table(tbl, cfg["neg_log10_p_col"])
+            else:
+                p_col = cfg.get("p_col", cfg.get("y_col", "pval"))
+                p_raw = _extract_column_from_table(tbl, p_col)
+            g_col = cfg.get("gene_col", cfg.get("label_col"))
+            if g_col is not None:
+                lbl_raw = _extract_column_from_table(tbl, g_col)
+
+    fc_list = _as_float_list(fc_raw, "log2fc")
+    if not fc_list:
+        raise ValueError("Mode 'volcano_plot' requires non-empty 'log2fc' array.")
+    n_pts = len(fc_list)
+
+    if nlp_raw is not None:
+        nlp_list = _as_float_list(nlp_raw, "neg_log10_p") or []
+    elif p_raw is not None:
+        p_vals = _as_float_list(p_raw, "pval") or []
+        if len(p_vals) != n_pts:
+            raise ValueError(f"volcano_plot: len(pval)={len(p_vals)} != len(log2fc)={n_pts}")
+        nlp_list = [-math.log10(max(float(pv), 1e-300)) for pv in p_vals]
+    else:
+        raise ValueError("Mode 'volcano_plot' requires either 'pval' or 'neg_log10_p'.")
+
+    if len(nlp_list) != n_pts:
+        raise ValueError(f"volcano_plot: len(neg_log10_p)={len(nlp_list)} != len(log2fc)={n_pts}")
+
+    if lbl_raw is not None:
+        labels_list = [str(v) for v in (lbl_raw.tolist() if hasattr(lbl_raw, "tolist") else lbl_raw)]
+        if len(labels_list) != n_pts:
+            raise ValueError(f"volcano_plot: len(genes/labels)={len(labels_list)} != len(log2fc)={n_pts}")
+    else:
+        labels_list = [f"Gene_{i + 1}" for i in range(n_pts)]
+
+    fc_cutoff = abs(float(cfg.get("fc_cutoff", 1.0)))
+    p_cutoff = float(cfg.get("p_cutoff", 0.05))
+    if p_cutoff <= 0.0 or p_cutoff >= 1.0:
+        raise ValueError(f"volcano_plot: p_cutoff must be in (0, 1), got {p_cutoff}")
+    y_thresh = -math.log10(max(p_cutoff, 1e-300))
+    top_n_labels = max(0, int(cfg.get("top_n_labels", 6)))
+    locale = str(cfg.get("locale", "en"))
+
+    down_color = str(cfg.get("down_color", "#2B6CB0"))
+    ns_color = str(cfg.get("ns_color", "#B8C2CC"))
+    up_color = str(cfg.get("up_color", "#D84B5C"))
+
+    buckets: Dict[str, Dict[str, List[Any]]] = {
+        "Down": {"x": [], "y": [], "labels": []},
+        "NS": {"x": [], "y": [], "labels": []},
+        "Up": {"x": [], "y": [], "labels": []},
+    }
+    sig_candidates: List[Dict[str, Any]] = []
+
+    for x_v, y_v, g_lbl in zip(fc_list, nlp_list, labels_list):
+        if x_v <= -fc_cutoff and y_v >= y_thresh:
+            buckets["Down"]["x"].append(x_v)
+            buckets["Down"]["y"].append(y_v)
+            buckets["Down"]["labels"].append(g_lbl)
+            sig_candidates.append({"x": x_v, "y": y_v, "label": g_lbl, "color": ot.normalize_hex(down_color), "regulation": "Down"})
+        elif x_v >= fc_cutoff and y_v >= y_thresh:
+            buckets["Up"]["x"].append(x_v)
+            buckets["Up"]["y"].append(y_v)
+            buckets["Up"]["labels"].append(g_lbl)
+            sig_candidates.append({"x": x_v, "y": y_v, "label": g_lbl, "color": ot.normalize_hex(up_color), "regulation": "Up"})
+        else:
+            buckets["NS"]["x"].append(x_v)
+            buckets["NS"]["y"].append(y_v)
+            buckets["NS"]["labels"].append(g_lbl)
+
+    color_by_bucket = {"Down": down_color, "NS": ns_color, "Up": up_color}
+    size_by_bucket = {
+        "Down": float(cfg.get("sig_marker_size_pt", 6.5)),
+        "NS": float(cfg.get("ns_marker_size_pt", 4.8)),
+        "Up": float(cfg.get("sig_marker_size_pt", 6.5)),
+    }
+
+    series_specs: List[SeriesSpec] = []
+    for b_name in ("Down", "NS", "Up"):
+        bx = buckets[b_name]["x"]
+        by = buckets[b_name]["y"]
+        bl = buckets[b_name]["labels"]
+        if not bx:
+            continue
+        series_specs.append(
+            SeriesSpec(
+                name=b_name,
+                x=bx,
+                y=by,
+                color=color_by_bucket[b_name],
+                line_style="none",
+                marker_style="circle_solid",
+                marker_size_pt=size_by_bucket[b_name],
+                meta={
+                    "point_labels": bl,
+                    "regulation": b_name,
+                    "count": len(bx),
+                    "alpha_pct": int(cfg.get("point_alpha_pct", 35)),
+                },
+            )
+        )
+
+    # Select top_n_labels callouts (prioritizing explicit highlight_genes if supplied, else highest y * (1 + 0.15*|x|))
+    highlight_req = [str(g) for g in (cfg.get("highlight_genes") or cfg.get("callout_labels") or [])]
+    point_callouts: List[Dict[str, Any]] = []
+    if top_n_labels > 0 and sig_candidates:
+        used_lbls: set[str] = set()
+        if highlight_req:
+            cand_by_lbl = {c["label"]: c for c in sig_candidates}
+            for hl in highlight_req:
+                if hl in cand_by_lbl and hl not in used_lbls and len(point_callouts) < top_n_labels:
+                    c_hit = cand_by_lbl[hl]
+                    point_callouts.append({"x": c_hit["x"], "y": c_hit["y"], "label": c_hit["label"], "color": c_hit["color"]})
+                    used_lbls.add(hl)
+        ranked = sorted(
+            sig_candidates,
+            key=lambda c: (float(c["y"]) * (1.0 + 0.15 * abs(float(c["x"]))), abs(float(c["x"]))),
+            reverse=True,
+        )
+        for c_hit in ranked:
+            if len(point_callouts) >= top_n_labels:
+                break
+            if c_hit["label"] not in used_lbls:
+                point_callouts.append({"x": c_hit["x"], "y": c_hit["y"], "label": c_hit["label"], "color": c_hit["color"]})
+                used_lbls.add(c_hit["label"])
+
+    guides: List[GuideSpec] = [
+        GuideSpec(kind="vline", value=-fc_cutoff, color="#666666", line_style="dashed", line_width_pt=1.5, label=""),
+        GuideSpec(kind="vline", value=fc_cutoff, color="#666666", line_style="dashed", line_width_pt=1.5, label=""),
+        GuideSpec(kind="hline", value=y_thresh, color="#666666", line_style="dashed", line_width_pt=1.5, label=""),
+    ]
+    if cfg.get("guides"):
+        guides.extend(_build_guides_from_cfg(cfg["guides"], theme))
+
+    layer = LayerSpec(
+        layer_id="volcano_main",
+        mark="scatter",
+        y_axis="y1",
+        series=series_specs,
+        color_scheme="paired_semantic",
+        palette_colors=[s.color for s in series_specs if s.color],
+    )
+    x_axis = AxisSpec(
+        which="x",
+        label=str(cfg.get("x_label", "log_2 Fold Change")),
+        axis_kind="quantitative",
+        limits=tuple(cfg["x_limits"]) if cfg.get("x_limits") is not None else None,
+    )
+    y1_axis = AxisSpec(
+        which="y1",
+        label=str(cfg.get("y_label", "-log_10(FDR)" if "fdr" in cfg else "-log_10(p-value)")),
+        axis_kind="quantitative",
+        limits=tuple(cfg["y_limits"]) if cfg.get("y_limits") is not None else None,
+    )
+    volcano_summary = {
+        "n_total": n_pts,
+        "n_down": len(buckets["Down"]["x"]),
+        "n_ns": len(buckets["NS"]["x"]),
+        "n_up": len(buckets["Up"]["x"]),
+        "fc_cutoff": fc_cutoff,
+        "p_cutoff": p_cutoff,
+    }
+    panel_meta: Dict[str, Any] = {
+        "point_callouts": point_callouts,
+        "volcano_summary": volcano_summary,
+        "locale": locale,
+    }
+    fig_meta: Dict[str, Any] = dict(cfg.get("meta") or {})
+    fig_meta["locale"] = locale
+    fig_meta["volcano_summary"] = volcano_summary
+
+    panel = PanelSpec(
+        panel_id="panel_main",
+        tag=str(cfg.get("tag", "a")),
+        x_axis=x_axis,
+        y1_axis=y1_axis,
+        layers=[layer],
+        guides=guides,
+        box_linewidth_pt=float(theme.get("figure_box_linewidth", 3.0)),
+        legend_style=str(cfg.get("legend_style", "corner_upper_right")),
+        meta=panel_meta,
+    )
+    return FigureSpec(
+        title=str(cfg.get("title", "Volcano_Differential_Expression")),
+        mode="volcano_plot",
+        style_preset=str(cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET)),
+        theme=theme,
+        nrows=1,
+        ncols=1,
+        panels=[panel],
+        output_dir=cfg.get("output_dir"),
+        build_opju=bool(cfg.get("build_opju", True)),
+        summary_metrics=volcano_summary,
+        meta=fig_meta,
+    )
+
+
+def _compile_forest_ablation_plot(
+    cfg: Dict[str, Any],
+    theme: Dict[str, Any],
+    loaded_tables: Optional[Dict[str, Any]],
+) -> "FigureSpec":
+    """
+    Compile `forest_ablation_plot`: horizontal effect size + 95% CI plot (`LayerSpec(mark='forest_ci')`)
+    with inverted categorical `y1_axis` (item 1 at top) and dashed `vline` at `null_value`.
+    """
+    raw_items = cfg.get("items") or cfg.get("series") or cfg.get("rows")
+    if not raw_items and (loaded_tables or cfg.get("input_file")):
+        tbl = _lookup_loaded_table(loaded_tables, cfg.get("table_key"), cfg.get("input_file"), "main")
+        if tbl is None and cfg.get("input_file"):
+            import importlib as _il
+
+            _et = _il.import_module("electrochem_transforms")
+            tbl = _et.load_tabular_sheet(
+                cfg["input_file"],
+                sheet=cfg.get("sheet", 0),
+                header_row=cfg.get("header_row", 0),
+            )
+        if tbl is not None and hasattr(tbl, "to_dict"):
+            raw_items = tbl.to_dict(orient="records")
+
+    if not isinstance(raw_items, (list, tuple)) or not raw_items:
+        raise ValueError("Mode 'forest_ablation_plot' requires non-empty 'items' list.")
+
+    clean_prefix = bool(cfg.get("clean_sample_prefix", False))
+    null_value = float(cfg.get("null_value", 0.0))
+    val_fmt = str(cfg.get("value_format", "{:.2f}"))
+    if "{" not in val_fmt:
+        val_fmt = "{:" + val_fmt.lstrip(":") + "}"
+    locale = str(cfg.get("locale", "en"))
+
+    K = len(raw_items)
+    default_cs = "okabe_ito" if K > 6 else "paired_semantic"
+    scheme = str(cfg.get("color_scheme", default_cs))
+    roles = [it.get("role") if isinstance(it, dict) else None for it in raw_items]
+    has_roles = any(r is not None for r in roles)
+    resolved_cols = ot.resolve_series_colors(K, roles=(roles if has_roles else None), scheme=scheme)
+
+    names: List[str] = []
+    estimates: List[float] = []
+    ci_lows: List[float] = []
+    ci_highs: List[float] = []
+    formatted_cis: List[str] = []
+    item_colors: List[str] = []
+    normalized_items: List[Dict[str, Any]] = []
+
+    for idx, it in enumerate(raw_items):
+        if not isinstance(it, dict):
+            raise TypeError(f"forest_ablation_plot items[{idx}] must be a dict, got {type(it).__name__}")
+        raw_nm = str(it.get("name", it.get("label", f"Item {idx + 1}")))
+        nm = ot.clean_semantic_sample_name(raw_nm, clean_prefix)
+        est_raw = it.get("estimate", it.get("mean", it.get("effect", it.get("x"))))
+        if est_raw is None:
+            raise ValueError(f"forest_ablation_plot items[{idx}] ({nm!r}) is missing 'estimate'.")
+        est = float(est_raw)
+
+        lo_raw = it.get("ci_low", it.get("low", it.get("lower")))
+        hi_raw = it.get("ci_high", it.get("high", it.get("upper")))
+        if lo_raw is None or hi_raw is None:
+            half_w = float(it.get("ci95_half", it.get("ci", it.get("err", 0.0))))
+            lo = est - abs(half_w)
+            hi = est + abs(half_w)
+        else:
+            lo = float(lo_raw)
+            hi = float(hi_raw)
+        if lo > hi:
+            lo, hi = hi, lo
+
+        c_hex = ot.normalize_hex(str(it["color"])) if it.get("color") else resolved_cols[idx % len(resolved_cols)]
+        fmt_str = f"{val_fmt.format(est)} [{val_fmt.format(lo)}, {val_fmt.format(hi)}]"
+
+        names.append(nm)
+        estimates.append(est)
+        ci_lows.append(lo)
+        ci_highs.append(hi)
+        formatted_cis.append(fmt_str)
+        item_colors.append(c_hex)
+        normalized_items.append(
+            {
+                "name": nm,
+                "y_pos": float(idx + 1),
+                "estimate": est,
+                "ci_low": lo,
+                "ci_high": hi,
+                "formatted_ci": fmt_str,
+                "color": c_hex,
+                "p_value": float(it["p_value"]) if it.get("p_value") is not None else None,
+            }
+        )
+
+    y_positions = [float(i + 1) for i in range(K)]
+    s_main = SeriesSpec(
+        name=str(cfg.get("series_name", "Estimate (95% CI)")),
+        x=estimates,
+        y=y_positions,
+        color=item_colors[0],
+        line_style="none",
+        marker_style="circle_solid",
+        marker_size_pt=float(cfg.get("marker_size_pt", 8.5)),
+        show_value_labels=bool(cfg.get("show_ci_text", True)),
+        value_format=val_fmt,
+        x_unit=cfg.get("x_unit"),
+        meta={
+            "ci_low": ci_lows,
+            "ci_high": ci_highs,
+            "formatted_ci": formatted_cis,
+            "item_names": names,
+            "item_colors": item_colors,
+            "null_value": null_value,
+            "error_type": "95% CI",
+            "items": normalized_items,
+        },
+    )
+
+    guides: List[GuideSpec] = [
+        GuideSpec(
+            kind="vline",
+            value=null_value,
+            color=str(cfg.get("null_color", "#555555")),
+            line_style="dashed",
+            line_width_pt=1.6,
+            label=str(cfg.get("null_label", "")),
+        )
+    ]
+    if cfg.get("guides"):
+        guides.extend(_build_guides_from_cfg(cfg["guides"], theme))
+
+    layer = LayerSpec(
+        layer_id="forest_main",
+        mark="forest_ci",
+        y_axis="y1",
+        series=[s_main],
+        categories=names,
+        color_scheme=scheme,
+        palette_colors=item_colors,
+        show_value_labels=bool(cfg.get("show_ci_text", True)),
+        style_overrides={"error_type": "95% CI", "null_value": null_value},
+    )
+    x_scale = str(cfg.get("x_scale", "linear")).strip().lower()
+    if x_scale == "log":
+        x_scale = "log10"
+    x_axis = AxisSpec(
+        which="x",
+        label=str(cfg.get("x_label", "Effect Size (95% CI)")),
+        unit=cfg.get("x_unit"),
+        axis_kind="quantitative",
+        scale=x_scale,
+        limits=tuple(cfg["x_limits"]) if cfg.get("x_limits") is not None else None,
+    )
+    y1_axis = AxisSpec(
+        which="y1",
+        label=str(cfg.get("y_label", "")),
+        axis_kind="categorical",
+        categories=names,
+        invert=True,
+        limits=(0.4, float(K) + 0.6),
+    )
+    panel_meta: Dict[str, Any] = {
+        "forest_items": normalized_items,
+        "null_value": null_value,
+        "error_bar_type": "95% CI",
+        "locale": locale,
+    }
+    fig_meta: Dict[str, Any] = dict(cfg.get("meta") or {})
+    fig_meta["locale"] = locale
+    fig_meta["error_bar_type"] = "95% CI"
+
+    panel = PanelSpec(
+        panel_id="panel_main",
+        tag=str(cfg.get("tag", "a")),
+        x_axis=x_axis,
+        y1_axis=y1_axis,
+        layers=[layer],
+        guides=guides,
+        box_linewidth_pt=float(theme.get("figure_box_linewidth", 3.0)),
+        legend_style=str(cfg.get("legend_style", "none")),
+        meta=panel_meta,
+    )
+    return FigureSpec(
+        title=str(cfg.get("title", "Forest_Ablation_CI")),
+        mode="forest_ablation_plot",
+        style_preset=str(cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET)),
+        theme=theme,
+        nrows=1,
+        ncols=1,
+        panels=[panel],
+        output_dir=cfg.get("output_dir"),
+        build_opju=bool(cfg.get("build_opju", True)),
+        summary_metrics={"n_items": K, "null_value": null_value},
+        meta=fig_meta,
+    )
+
+
+def _compile_free_energy_diagram(
+    cfg: Dict[str, Any],
+    theme: Dict[str, Any],
+    loaded_tables: Optional[Dict[str, Any]],
+) -> "FigureSpec":
+    """
+    Compile `free_energy_diagram`: multi-pathway reaction free-energy step profile
+    (`LayerSpec(mark='energy_step')`) with horizontal plateaus `[i - 0.28, i + 0.28]`,
+    dashed connectors `[i + 0.28, i + 1 - 0.28]`, categorical X `step_labels`,
+    and Y label `Free Energy \\g(D)\\i(G) (eV)`.
+    """
+    raw_pathways = cfg.get("pathways") or cfg.get("series")
+    if not isinstance(raw_pathways, (list, tuple)) or not raw_pathways:
+        raise ValueError("Mode 'free_energy_diagram' requires non-empty 'pathways' list.")
+
+    clean_prefix = bool(cfg.get("clean_sample_prefix", False))
+    hw = float(cfg.get("plateau_half_width", 0.28))
+    if not (0.05 <= hw <= 0.45):
+        raise ValueError(f"plateau_half_width must be in [0.05, 0.45], got {hw}")
+    locale = str(cfg.get("locale", "en"))
+
+    n_pw = len(raw_pathways)
+    scheme = str(cfg.get("color_scheme", "paired_semantic" if n_pw <= 6 else "okabe_ito"))
+    roles = [pw.get("role") if isinstance(pw, dict) else None for pw in raw_pathways]
+    has_roles = any(r is not None for r in roles)
+    resolved_cols = ot.resolve_series_colors(n_pw, roles=(roles if has_roles else None), scheme=scheme)
+
+    first_steps = raw_pathways[0].get("steps", raw_pathways[0].get("energies", raw_pathways[0].get("y", raw_pathways[0].get("values"))))
+    first_floats = _as_float_list(first_steps, "pathways[0].steps")
+    if not first_floats or len(first_floats) < 2:
+        raise ValueError("free_energy_diagram requires at least 2 energy steps per pathway.")
+    M = len(first_floats)
+
+    raw_step_labels = cfg.get("step_labels") or cfg.get("categories") or cfg.get("reaction_steps")
+    if raw_step_labels is not None:
+        step_labels = [str(s) for s in raw_step_labels]
+        if len(step_labels) != M:
+            raise ValueError(f"len(step_labels)={len(step_labels)} must match pathway step count ({M}).")
+    else:
+        step_labels = [f"Step {i + 1}" for i in range(M)]
+
+    base_lw = float(theme.get("curve_linewidth", 3.0))
+    pw_series: List[SeriesSpec] = []
+    ts_spline_series: List[SeriesSpec] = []
+    rds_records: List[Dict[str, Any]] = []
+    ts_records: List[Dict[str, Any]] = []
+    guides: List[GuideSpec] = []
+
+    all_g_vals: List[float] = []
+    for pw_tmp in raw_pathways:
+        if isinstance(pw_tmp, dict):
+            st_tmp = pw_tmp.get("steps", pw_tmp.get("energies", pw_tmp.get("y", pw_tmp.get("values"))))
+            if st_tmp is not None:
+                all_g_vals.extend(_as_float_list(st_tmp, "steps") or [])
+            for ts_tmp in (pw_tmp.get("ts") or pw_tmp.get("ts_barriers") or []):
+                if isinstance(ts_tmp, dict) and ts_tmp.get("g_ts") is not None:
+                    all_g_vals.append(float(ts_tmp["g_ts"]))
+    g_span_est = max((max(all_g_vals) - min(all_g_vals)) if all_g_vals else 1.0, 0.5)
+
+    for idx, pw in enumerate(raw_pathways):
+        if not isinstance(pw, dict):
+            raise TypeError(f"free_energy_diagram pathways[{idx}] must be a dict.")
+        raw_nm = str(pw.get("name", f"Pathway {idx + 1}"))
+        nm = ot.clean_semantic_sample_name(raw_nm, clean_prefix)
+        st_seq = pw.get("steps", pw.get("energies", pw.get("y", pw.get("values"))))
+        steps_v = _as_float_list(st_seq, f"pathways[{idx}].steps") or []
+        if len(steps_v) != M:
+            raise ValueError(
+                f"free_energy_diagram pathway {nm!r} has {len(steps_v)} steps, expected {M}."
+            )
+        c_hex = ot.normalize_hex(str(pw["color"])) if pw.get("color") else resolved_cols[idx % len(resolved_cols)]
+
+        # Resolve optional transition-state saddle points (`ts` / `ts_barriers`)
+        raw_ts_list = pw.get("ts") if pw.get("ts") is not None else pw.get("ts_barriers")
+        ts_by_step: Dict[int, Dict[str, Any]] = {}
+        norm_ts_list: List[Dict[str, Any]] = []
+        if isinstance(raw_ts_list, (list, tuple)) and raw_ts_list:
+            zero_based = any(
+                isinstance(t_it, dict)
+                and isinstance(t_it.get("step_from"), int)
+                and int(t_it["step_from"]) == 0
+                for t_it in raw_ts_list
+            )
+            for t_i, t_it in enumerate(raw_ts_list):
+                if not isinstance(t_it, dict):
+                    raise TypeError(f"pathways[{idx}].ts[{t_i}] must be a dict.")
+                sf_raw = t_it.get("step_from")
+                st_raw = t_it.get("step_to")
+                if isinstance(sf_raw, str) and sf_raw in step_labels:
+                    s_from_idx = step_labels.index(sf_raw)
+                elif sf_raw is not None:
+                    s_from_idx = int(sf_raw) if zero_based else int(sf_raw) - 1
+                else:
+                    raise ValueError(f"pathways[{idx}].ts[{t_i}] requires 'step_from'.")
+                if isinstance(st_raw, str) and st_raw in step_labels:
+                    s_to_idx = step_labels.index(st_raw)
+                elif st_raw is not None:
+                    s_to_idx = int(st_raw) if zero_based else int(st_raw) - 1
+                else:
+                    s_to_idx = s_from_idx + 1
+                if not (0 <= s_from_idx < M - 1 and s_to_idx == s_from_idx + 1):
+                    raise ValueError(
+                        f"pathways[{idx}].ts[{t_i}] must connect adjacent steps in 1..{M}, got ({sf_raw} -> {st_raw})."
+                    )
+                g_ts_val = float(t_it["g_ts"])
+                ts_lbl = str(t_it.get("label", "")).strip()
+                x_r = float(s_from_idx + 1) + hw
+                x_l = float(s_to_idx + 1) - hw
+                x_m = 0.5 * (x_r + x_l)
+                g_a = float(steps_v[s_from_idx])
+                g_b = float(steps_v[s_to_idx])
+                spline_x = [
+                    round(x_r, 6),
+                    round(x_r + 0.25 * (x_l - x_r), 6),
+                    round(x_m, 6),
+                    round(x_r + 0.75 * (x_l - x_r), 6),
+                    round(x_l, 6),
+                ]
+                spline_y = [
+                    round(g_a, 6),
+                    round(0.5 * (g_a + g_ts_val), 6),
+                    round(g_ts_val, 6),
+                    round(0.5 * (g_ts_val + g_b), 6),
+                    round(g_b, 6),
+                ]
+                ts_rec = {
+                    "pathway": nm,
+                    "step_from": s_from_idx + 1,
+                    "step_to": s_to_idx + 1,
+                    "step_from_label": step_labels[s_from_idx],
+                    "step_to_label": step_labels[s_to_idx],
+                    "g_ts": g_ts_val,
+                    "ea_forward": round(g_ts_val - g_a, 6),
+                    "label": ts_lbl,
+                    "spline_x": spline_x,
+                    "spline_y": spline_y,
+                }
+                ts_by_step[s_from_idx] = ts_rec
+                norm_ts_list.append(ts_rec)
+                ts_records.append(ts_rec)
+                ts_spline_series.append(
+                    SeriesSpec(
+                        name=f"{nm}_{ts_lbl or f'TS{s_from_idx + 1}'}",
+                        x=spline_x,
+                        y=spline_y,
+                        color=c_hex,
+                        line_style=str(t_it.get("line_style", "solid")),
+                        line_width_pt=float(t_it.get("line_width_pt", max(1.1, round(base_lw * 0.85, 2)))),
+                        marker_style="none",
+                        y_unit=str(cfg.get("y_unit", "eV")),
+                        meta={
+                            "line_connect": "spline",
+                            "skip_legend": True,
+                            "is_ts_barrier": True,
+                            "ts_label": ts_lbl,
+                            "g_ts": g_ts_val,
+                            "ea_forward": round(g_ts_val - g_a, 6),
+                        },
+                    )
+                )
+                if ts_lbl and bool(t_it.get("show_label", True)):
+                    guides.append(
+                        GuideSpec(
+                            kind="peak_tag",
+                            x=x_m,
+                            y=g_ts_val + 0.045 * g_span_est,
+                            value=x_m,
+                            label=ts_lbl,
+                            color=c_hex,
+                        )
+                    )
+
+        # 1-based Origin categorical X coordinates: step k sits at x = k + 1.0
+        x_centers = [float(k + 1) for k in range(M)]
+        plateau_segments = [
+            ([float(k + 1) - hw, float(k + 1) + hw], [float(g_val), float(g_val)])
+            for k, g_val in enumerate(steps_v)
+        ]
+        connector_segments = [
+            ([float(k + 1) + hw, float(k + 2) - hw], [float(steps_v[k]), float(steps_v[k + 1])])
+            for k in range(M - 1)
+            if k not in ts_by_step
+        ]
+
+        deltas = [float(steps_v[k + 1] - steps_v[k]) for k in range(M - 1)]
+        rds_step_idx = max(range(len(deltas)), key=lambda k: deltas[k])
+        rds_info = {
+            "pathway": nm,
+            "step_from_idx": rds_step_idx,
+            "step_to_idx": rds_step_idx + 1,
+            "step_from": step_labels[rds_step_idx],
+            "step_to": step_labels[rds_step_idx + 1],
+            "g_from": float(steps_v[rds_step_idx]),
+            "g_to": float(steps_v[rds_step_idx + 1]),
+            "delta_g_max": float(deltas[rds_step_idx]),
+            "color": c_hex,
+        }
+        rds_records.append(rds_info)
+
+        pw_series.append(
+            SeriesSpec(
+                name=nm,
+                x=x_centers,
+                y=steps_v,
+                role=pw.get("role"),
+                color=c_hex,
+                line_style="solid",
+                line_width_pt=float(pw.get("line_width_pt", round(base_lw * 1.35, 2))),
+                marker_style="none",
+                y_unit=str(cfg.get("y_unit", "eV")),
+                meta={
+                    "steps": steps_v,
+                    "step_labels": step_labels,
+                    "plateau_half_width": hw,
+                    "plateau_segments": plateau_segments,
+                    "connector_segments": connector_segments,
+                    "step_deltas": deltas,
+                    "rds": rds_info,
+                    "ts_barriers": norm_ts_list,
+                },
+            )
+        )
+
+    rds_cfg = cfg.get("rds_highlight")
+    if rds_cfg:
+        # Optional span_v annotation on the primary or specified pathway if requested
+        if isinstance(rds_cfg, dict) and rds_cfg.get("draw_span", False):
+            target_pw = str(rds_cfg.get("pathway", rds_records[0]["pathway"]))
+            rec = next((r for r in rds_records if r["pathway"] == target_pw), rds_records[0])
+            guides.append(
+                GuideSpec(
+                    kind="span_v",
+                    start=rec["g_from"],
+                    end=rec["g_to"],
+                    anchor_pos=float(rec["step_to_idx"] + 1),
+                    label=f"\\g(D)\\i(G)\\-(RDS) = {rec['delta_g_max']:.2f} eV",
+                    color=rec["color"],
+                    line_width_pt=1.6,
+                )
+            )
+
+    if bool(cfg.get("show_zero_line", False)):
+        guides.append(GuideSpec(kind="hline", value=0.0, color="#888888", line_style="dashed", line_width_pt=1.4, label=""))
+    if cfg.get("guides"):
+        guides.extend(_build_guides_from_cfg(cfg["guides"], theme))
+
+    layer = LayerSpec(
+        layer_id="energy_step_main",
+        mark="energy_step",
+        y_axis="y1",
+        series=pw_series,
+        categories=step_labels,
+        color_scheme=scheme,
+        palette_colors=[s.color for s in pw_series if s.color],
+        style_overrides={"plateau_half_width": hw, "rds_highlight": bool(rds_cfg)},
+    )
+    panel_layers: List[LayerSpec] = []
+    if ts_spline_series:
+        panel_layers.append(
+            LayerSpec(
+                layer_id="energy_ts_splines",
+                mark="line_scatter",
+                y_axis="y1",
+                series=ts_spline_series,
+                color_scheme=scheme,
+                palette_colors=[s.color for s in ts_spline_series if s.color],
+                origin_plot_type=200,
+            )
+        )
+    panel_layers.append(layer)
+
+    x_axis = AxisSpec(
+        which="x",
+        label=str(cfg.get("x_label", "Reaction Coordinate")),
+        axis_kind="categorical",
+        categories=step_labels,
+        limits=(1.0 - hw - 0.25, float(M) + hw + 0.25),
+    )
+    y1_axis = AxisSpec(
+        which="y1",
+        label=str(cfg.get("y_label", "Free Energy \\g(D)\\i(G) (eV)")),
+        unit=str(cfg.get("y_unit", "eV")),
+        axis_kind="quantitative",
+        limits=tuple(cfg["y_limits"]) if cfg.get("y_limits") is not None else None,
+    )
+    panel_meta: Dict[str, Any] = {
+        "step_labels": step_labels,
+        "plateau_half_width": hw,
+        "rds_highlights": rds_records if rds_cfg else [],
+        "rds_summary": rds_records,
+        "ts_summary": ts_records,
+        "locale": locale,
+    }
+    fig_meta: Dict[str, Any] = dict(cfg.get("meta") or {})
+    fig_meta["locale"] = locale
+    fig_meta["rds_summary"] = rds_records
+    if ts_records:
+        fig_meta["ts_summary"] = ts_records
+
+    panel = PanelSpec(
+        panel_id="panel_main",
+        tag=str(cfg.get("tag", "a")),
+        x_axis=x_axis,
+        y1_axis=y1_axis,
+        layers=panel_layers,
+        guides=guides,
+        box_linewidth_pt=float(theme.get("figure_box_linewidth", 3.0)),
+        legend_style=str(cfg.get("legend_style", "corner_upper_left" if n_pw >= 2 else "none")),
+        meta=panel_meta,
+    )
+    return FigureSpec(
+        title=str(cfg.get("title", "Reaction_Free_Energy_Diagram")),
+        mode="free_energy_diagram",
+        style_preset=str(cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET)),
+        journal_spec=cfg.get("journal_spec"),
+        theme=theme,
+        nrows=1,
+        ncols=1,
+        panels=[panel],
+        output_dir=cfg.get("output_dir"),
+        build_opju=bool(cfg.get("build_opju", True)),
+        summary_metrics={
+            "n_pathways": n_pw,
+            "n_steps": M,
+            "rds_by_pathway": {r["pathway"]: round(r["delta_g_max"], 4) for r in rds_records},
+            "n_ts_barriers": len(ts_records),
+        },
+        meta=fig_meta,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2/3 Cross-Science Compilers (Survival, ROC/PR, NMR, Broken-Axis,
+# Dual-X Optical, Ternary, Polar/Radar, Multi-Track Depth, Vector Quiver)
+# ---------------------------------------------------------------------------
+
+
+def _compile_kaplan_meier_plot(
+    cfg: Dict[str, Any],
+    theme: Dict[str, Any],
+    loaded_tables: Optional[Dict[str, Any]],
+) -> FigureSpec:
+    """Compile `kaplan_meier_plot`: clinical/reliability Kaplan-Meier step curves + Greenwood CI + censor ticks + Number-at-risk."""
+    import stat_engine as se
+
+    tbl = _lookup_loaded_table(loaded_tables, cfg.get("table_key"), cfg.get("input_file"), "main")
+    raw_groups = cfg.get("groups") or cfg.get("arms") or cfg.get("series")
+    if not raw_groups and tbl is not None:
+        t_col = cfg.get("time_col", "time")
+        e_col = cfg.get("event_col", cfg.get("status_col", "event"))
+        g_col = cfg.get("group_col", cfg.get("arm_col"))
+        t_all = _extract_column_from_table(tbl, t_col) or []
+        e_all = _extract_column_from_table(tbl, e_col) or []
+        if g_col is not None:
+            g_all = [str(v) for v in (_extract_column_from_table(tbl, g_col) or [])]
+            seen_g: List[str] = []
+            for gv in g_all:
+                if gv not in seen_g:
+                    seen_g.append(gv)
+            raw_groups = [
+                {
+                    "name": gn,
+                    "time": [t_all[i] for i in range(len(t_all)) if g_all[i] == gn],
+                    "event": [e_all[i] for i in range(len(e_all)) if g_all[i] == gn],
+                }
+                for gn in seen_g
+            ]
+        else:
+            raw_groups = [{"name": str(cfg.get("arm_name", "Cohort")), "time": t_all, "event": e_all}]
+
+    if not isinstance(raw_groups, (list, tuple)) or not raw_groups:
+        raise ValueError("Mode 'kaplan_meier_plot' requires non-empty 'groups' / 'arms' list.")
+
+    clean_prefix = bool(cfg.get("clean_sample_prefix", False))
+    locale = str(cfg.get("locale", "en"))
+    show_ci = bool(cfg.get("show_ci", True))
+    show_censor = bool(cfg.get("show_censor", True))
+    show_risk_table = bool(cfg.get("show_risk_table", True))
+    y_scale_pct = bool(cfg.get("y_scale_pct", False))
+    conf_level = float(cfg.get("conf_level", cfg.get("ci_level", 0.95)))
+
+    n_arms = len(raw_groups)
+    scheme = str(cfg.get("color_scheme", "paired_semantic" if n_arms <= 6 else "okabe_ito"))
+    roles = [g.get("role") if isinstance(g, dict) else None for g in raw_groups]
+    resolved_cols = ot.resolve_series_colors(n_arms, roles=(roles if any(roles) else None), scheme=scheme)
+
+    norm_groups: List[Dict[str, Any]] = []
+    for idx, g_item in enumerate(raw_groups):
+        if not isinstance(g_item, dict):
+            raise TypeError(f"kaplan_meier_plot groups[{idx}] must be a dict.")
+        nm = ot.clean_semantic_sample_name(str(g_item.get("name", f"Arm {idx + 1}")), clean_prefix)
+        c_hex = ot.normalize_hex(str(g_item["color"])) if g_item.get("color") else resolved_cols[idx % len(resolved_cols)]
+        norm_groups.append(
+            {
+                "name": nm,
+                "time": g_item.get("time", g_item.get("x")),
+                "event": g_item.get("event", g_item.get("status", g_item.get("censor_event"))),
+                "role": g_item.get("role"),
+                "color": c_hex,
+            }
+        )
+
+    km_res = se.kaplan_meier_survival(norm_groups, risk_times=cfg.get("risk_times"), conf_level=conf_level)
+    y_mult = 100.0 if y_scale_pct else 1.0
+    base_lw = float(theme.get("curve_linewidth", 3.0))
+
+    km_series: List[SeriesSpec] = []
+    max_time_obs = 0.0
+    for idx, arm_res in enumerate(km_res["arms"]):
+        arm_nm = str(arm_res.get("name", norm_groups[idx]["name"]))
+        c_hex = ot.normalize_hex(str(arm_res.get("color") or norm_groups[idx]["color"]))
+        step_t = [float(v) for v in arm_res["time"]]
+        step_s = [float(v) * y_mult for v in arm_res["survival"]]
+        if step_t:
+            max_time_obs = max(max_time_obs, max(step_t))
+        ci_lo = [float(v) * y_mult for v in arm_res["ci_low"]] if (show_ci and arm_res.get("ci_low") is not None) else None
+        ci_hi = [float(v) * y_mult for v in arm_res["ci_high"]] if (show_ci and arm_res.get("ci_high") is not None) else None
+        cens_t = [float(v) for v in (arm_res.get("censored_time") or [])] if show_censor else []
+        cens_s = [float(v) * y_mult for v in (arm_res.get("censored_surv") or [])] if show_censor else []
+        med_t = float(arm_res["median_survival"]) if arm_res.get("median_survival") is not None else None
+
+        km_series.append(
+            SeriesSpec(
+                name=arm_nm,
+                x=step_t,
+                y=step_s,
+                y_low=ci_lo,
+                y_high=ci_hi,
+                role=arm_res.get("role"),
+                color=c_hex,
+                line_style="solid",
+                line_width_pt=base_lw,
+                marker_style="none",
+                fill_alpha=float(cfg.get("ci_alpha", 0.22)) if show_ci else None,
+                x_unit=cfg.get("x_unit"),
+                y_unit="%" if y_scale_pct else None,
+                meta={
+                    "line_connect": "step_horz",
+                    "censored_x": cens_t,
+                    "censored_y": cens_s,
+                    "median_survival": med_t,
+                    "n_total": arm_res.get("n_total", arm_res.get("n")),
+                    "n_events": arm_res.get("n_events"),
+                    "n_censored": arm_res.get("n_censored"),
+                },
+            )
+        )
+
+    risk_tbl = copy.deepcopy(km_res.get("at_risk_table")) if km_res.get("at_risk_table") else None
+    rt_step: Optional[float] = None
+    x_hi_default = max(1.0, max_time_obs)
+    if risk_tbl and isinstance(risk_tbl.get("times"), list) and len(risk_tbl["times"]) >= 2:
+        rt_times = [float(v) for v in risk_tbl["times"]]
+        if rt_times[1] > rt_times[0]:
+            rt_step = round(rt_times[1] - rt_times[0], 8)
+        x_hi_default = max(x_hi_default, max(rt_times))
+        for r_idx, r_row in enumerate(risk_tbl.get("rows") or []):
+            if isinstance(r_row, dict) and r_idx < len(km_series):
+                r_row.setdefault("color", km_series[r_idx].color)
+
+    summary_lines: List[str] = []
+    lr = km_res.get("logrank")
+    if isinstance(lr, dict) and lr.get("p_value") is not None:
+        pv = float(lr["p_value"])
+        p_txt = "< 0.0001" if pv < 1e-4 else f"= {pv:.4f}" if pv < 0.01 else f"= {pv:.3f}"
+        summary_lines.append(f"Log-rank p {p_txt}")
+    hr = km_res.get("hazard_ratio")
+    if isinstance(hr, dict) and hr.get("hr") is not None:
+        hr_v = float(hr["hr"])
+        hr_lo = hr.get("hr_ci_low", hr.get("ci_low"))
+        hr_hi = hr.get("hr_ci_high", hr.get("ci_high"))
+        if hr_lo is not None and hr_hi is not None:
+            summary_lines.append(f"HR = {hr_v:.2f} (95% CI: {float(hr_lo):.2f}-{float(hr_hi):.2f})")
+        else:
+            summary_lines.append(f"HR = {hr_v:.2f}")
+
+    guides = _build_guides_from_cfg(cfg.get("guides", []), theme)
+    if bool(cfg.get("show_median_guides", False)):
+        guides.append(
+            GuideSpec(
+                kind="hline",
+                value=50.0 if y_scale_pct else 0.5,
+                color="#888888",
+                line_style="dashed",
+                line_width_pt=max(0.8, round(base_lw * 0.48, 2)),
+            )
+        )
+
+    layer = LayerSpec(
+        layer_id="km_main",
+        mark="km_step",
+        y_axis="y1",
+        series=km_series,
+        color_scheme=scheme,
+        palette_colors=[s.color for s in km_series if s.color],
+        origin_plot_type=200,
+    )
+    x_axis = AxisSpec(
+        which="x",
+        label=str(cfg.get("x_label", "Time (months)")),
+        unit=cfg.get("x_unit"),
+        axis_kind="quantitative",
+        limits=tuple(cfg["x_limits"]) if cfg.get("x_limits") is not None else (0.0, x_hi_default),
+        major_step=float(cfg["x_major_step"]) if cfg.get("x_major_step") is not None else rt_step,
+    )
+    y1_axis = AxisSpec(
+        which="y1",
+        label=str(cfg.get("y_label", "Survival (%)" if y_scale_pct else "Survival Probability")),
+        unit="%" if y_scale_pct else None,
+        axis_kind="quantitative",
+        limits=tuple(cfg["y_limits"]) if cfg.get("y_limits") is not None else (0.0, 105.0 if y_scale_pct else 1.05),
+        major_step=20.0 if y_scale_pct else 0.2,
+    )
+
+    panel_meta: Dict[str, Any] = {
+        "km_summary_lines": summary_lines,
+        "logrank": lr,
+        "hazard_ratio": hr,
+        "y_scale_pct": y_scale_pct,
+        "locale": locale,
+    }
+    if show_risk_table and risk_tbl:
+        panel_meta["at_risk_table"] = risk_tbl
+
+    fig_meta: Dict[str, Any] = dict(cfg.get("meta") or {})
+    fig_meta["locale"] = locale
+    fig_meta["statistical_tests"] = list(km_res.get("stat_rows") or [])
+    if show_risk_table and risk_tbl:
+        fig_meta["at_risk_table"] = risk_tbl
+
+    panel = PanelSpec(
+        panel_id="panel_main",
+        tag=str(cfg.get("tag", "a")),
+        x_axis=x_axis,
+        y1_axis=y1_axis,
+        layers=[layer],
+        guides=guides,
+        box_linewidth_pt=float(theme.get("figure_box_linewidth", 3.0)),
+        legend_style=str(cfg.get("legend_style", "corner_upper_right")),
+        meta=panel_meta,
+    )
+    return FigureSpec(
+        title=str(cfg.get("title", "Kaplan_Meier_Survival")),
+        mode="kaplan_meier_plot",
+        style_preset=str(cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET)),
+        journal_spec=cfg.get("journal_spec"),
+        theme=theme,
+        panels=[panel],
+        output_dir=cfg.get("output_dir"),
+        build_opju=bool(cfg.get("build_opju", True)),
+        summary_metrics={
+            "n_arms": n_arms,
+            "logrank_p": lr.get("p_value") if isinstance(lr, dict) else None,
+            "hr": hr.get("hr") if isinstance(hr, dict) else None,
+            "median_survival": {s.name: s.meta.get("median_survival") for s in km_series},
+        },
+        meta=fig_meta,
+    )
+
+
+def _compile_roc_pr_curve(
+    cfg: Dict[str, Any],
+    theme: Dict[str, Any],
+    loaded_tables: Optional[Dict[str, Any]],
+) -> FigureSpec:
+    """Compile `roc_pr_curve`: multi-model ROC (AUROC ± Hanley-McNeil CI + Youden point) or Precision-Recall curves."""
+    import stat_engine as se
+
+    tbl = _lookup_loaded_table(loaded_tables, cfg.get("table_key"), cfg.get("input_file"), "main")
+    raw_models = cfg.get("models") or cfg.get("series")
+    if not raw_models and tbl is not None:
+        yt_col = cfg.get("y_true_col", "y_true")
+        ys_cols = cfg.get("y_score_cols") or ([cfg["y_score_col"]] if cfg.get("y_score_col") else ["y_score"])
+        yt_vals = _extract_column_from_table(tbl, yt_col)
+        raw_models = [
+            {"name": str(sc), "y_true": yt_vals, "y_score": _extract_column_from_table(tbl, sc)}
+            for sc in ys_cols
+        ]
+    if not isinstance(raw_models, (list, tuple)) or not raw_models:
+        raise ValueError("Mode 'roc_pr_curve' requires non-empty 'models' / 'series' list.")
+
+    curve_kind = str(cfg.get("curve_kind") or cfg.get("subtype") or "roc").strip().lower()
+    if curve_kind not in ("roc", "pr"):
+        raise ValueError(f"roc_pr_curve curve_kind must be 'roc' or 'pr', got {curve_kind!r}")
+    show_opt = bool(cfg.get("show_optimal_point", True))
+    conf_level = float(cfg.get("conf_level", cfg.get("ci_level", 0.95)))
+    locale = str(cfg.get("locale", "en"))
+    clean_prefix = bool(cfg.get("clean_sample_prefix", False))
+
+    n_models = len(raw_models)
+    scheme = str(cfg.get("color_scheme", "paired_semantic" if n_models <= 6 else "okabe_ito"))
+    roles = [m.get("role") if isinstance(m, dict) else None for m in raw_models]
+    resolved_cols = ot.resolve_series_colors(n_models, roles=(roles if any(roles) else None), scheme=scheme)
+
+    norm_models: List[Dict[str, Any]] = []
+    for idx, m_item in enumerate(raw_models):
+        if not isinstance(m_item, dict):
+            raise TypeError(f"roc_pr_curve models[{idx}] must be a dict.")
+        m_copy = dict(m_item)
+        m_copy["name"] = ot.clean_semantic_sample_name(str(m_item.get("name", f"Model {idx + 1}")), clean_prefix)
+        m_copy["color"] = ot.normalize_hex(str(m_item["color"])) if m_item.get("color") else resolved_cols[idx % len(resolved_cols)]
+        norm_models.append(m_copy)
+
+    roc_res = se.compute_roc_pr_curves(norm_models, conf_level=conf_level)
+    curves_list = roc_res.get("curves") or []
+    base_lw = float(theme.get("curve_linewidth", 3.0))
+
+    series_specs: List[SeriesSpec] = []
+    best_opt: Optional[Tuple[float, float, str, str]] = None
+    best_auc = -1.0
+
+    for idx, c_rec in enumerate(curves_list):
+        m_nm = str(c_rec.get("name", norm_models[idx]["name"]))
+        c_hex = ot.normalize_hex(str(c_rec.get("color") or norm_models[idx]["color"]))
+        auroc = float(c_rec.get("auroc", 0.0))
+        ci_lo = c_rec.get("ci_low")
+        ci_hi = c_rec.get("ci_high")
+        auprc = c_rec.get("auprc")
+
+        if curve_kind == "pr":
+            xv = _as_float_list(c_rec.get("recall") or c_rec.get("fpr"), f"models[{idx}].recall") or [0.0, 1.0]
+            yv = _as_float_list(c_rec.get("precision") or c_rec.get("tpr"), f"models[{idx}].precision") or [1.0, 0.5]
+            metric_val = float(auprc) if auprc is not None else auroc
+            disp_nm = f"{m_nm} (AUPRC = {metric_val:.3f})"
+        else:
+            xv = _as_float_list(c_rec.get("fpr"), f"models[{idx}].fpr") or [0.0, 1.0]
+            yv = _as_float_list(c_rec.get("tpr"), f"models[{idx}].tpr") or [0.0, 1.0]
+            disp_nm = f"{m_nm} (AUC = {auroc:.3f})"
+            opt_d = c_rec.get("optimal_point") or c_rec.get("youden")
+            if isinstance(opt_d, dict) and opt_d.get("fpr") is not None and opt_d.get("tpr") is not None:
+                if auroc > best_auc:
+                    best_auc = auroc
+                    best_opt = (float(opt_d["fpr"]), float(opt_d["tpr"]), c_hex, m_nm)
+
+        series_specs.append(
+            SeriesSpec(
+                name=disp_nm,
+                x=xv,
+                y=yv,
+                color=c_hex,
+                role=norm_models[idx].get("role"),
+                line_style="solid",
+                line_width_pt=base_lw,
+                marker_style="none",
+                meta={
+                    "model_name": m_nm,
+                    "curve_kind": curve_kind,
+                    "auroc": auroc,
+                    "ci_low": ci_lo,
+                    "ci_high": ci_hi,
+                    "auprc": auprc,
+                    "optimal_point": c_rec.get("optimal_point") or c_rec.get("youden"),
+                },
+            )
+        )
+
+    # Diagonal chance line (ROC) or prevalence baseline (PR)
+    if curve_kind == "roc":
+        series_specs.append(
+            SeriesSpec(
+                name="Chance",
+                x=[0.0, 1.0],
+                y=[0.0, 1.0],
+                color="#888888",
+                line_style="dashed",
+                line_width_pt=max(0.8, round(base_lw * 0.52, 2)),
+                marker_style="none",
+                meta={"skip_legend": True, "is_chance_line": True},
+            )
+        )
+        if show_opt and best_opt is not None:
+            opt_fpr, opt_tpr, opt_col, opt_nm = best_opt
+            series_specs.append(
+                SeriesSpec(
+                    name=f"{opt_nm} Cutoff",
+                    x=[opt_fpr],
+                    y=[opt_tpr],
+                    color=opt_col,
+                    line_style="none",
+                    marker_style="circle_open",
+                    marker_size_pt=float(theme.get("origin_native", {}).get("marker_size_pt", 7.5)) * 1.15,
+                    meta={"skip_legend": True, "is_optimal_point": True},
+                )
+            )
+    else:
+        pos_rate = float(curves_list[0].get("pos_rate") or 0.5) if curves_list else 0.5
+        series_specs.append(
+            SeriesSpec(
+                name="Baseline",
+                x=[0.0, 1.0],
+                y=[pos_rate, pos_rate],
+                color="#888888",
+                line_style="dashed",
+                line_width_pt=max(0.8, round(base_lw * 0.52, 2)),
+                marker_style="none",
+                meta={"skip_legend": True, "is_chance_line": True},
+            )
+        )
+
+    layer = LayerSpec(
+        layer_id="roc_pr_main",
+        mark="line_scatter",
+        y_axis="y1",
+        series=series_specs,
+        color_scheme=scheme,
+        palette_colors=[s.color for s in series_specs if s.color],
+        origin_plot_type=202 if (show_opt and best_opt is not None) else 200,
+    )
+    default_xlab = "Recall (Sensitivity)" if curve_kind == "pr" else "False Positive Rate (1 - Specificity)"
+    default_ylab = "Precision (PPV)" if curve_kind == "pr" else "True Positive Rate (Sensitivity)"
+    x_axis = AxisSpec(
+        which="x",
+        label=str(cfg.get("x_label", default_xlab)),
+        axis_kind="quantitative",
+        limits=tuple(cfg["x_limits"]) if cfg.get("x_limits") is not None else (0.0, 1.0),
+        major_step=0.2,
+    )
+    y1_axis = AxisSpec(
+        which="y1",
+        label=str(cfg.get("y_label", default_ylab)),
+        axis_kind="quantitative",
+        limits=tuple(cfg["y_limits"]) if cfg.get("y_limits") is not None else (0.0, 1.05),
+        major_step=0.2,
+    )
+
+    fig_meta: Dict[str, Any] = dict(cfg.get("meta") or {})
+    fig_meta["locale"] = locale
+    fig_meta["statistical_tests"] = list(roc_res.get("stat_rows") or [])
+    fig_meta["roc_curves"] = curves_list
+
+    panel = PanelSpec(
+        panel_id="panel_main",
+        tag=str(cfg.get("tag", "a")),
+        x_axis=x_axis,
+        y1_axis=y1_axis,
+        layers=[layer],
+        guides=_build_guides_from_cfg(cfg.get("guides", []), theme),
+        equal_aspect=bool(cfg.get("equal_aspect", False)),
+        box_linewidth_pt=float(theme.get("figure_box_linewidth", 3.0)),
+        legend_style=str(cfg.get("legend_style", "corner_lower_right" if curve_kind == "roc" else "corner_lower_left")),
+        meta={"curve_kind": curve_kind, "roc_curves": curves_list, "locale": locale},
+    )
+    return FigureSpec(
+        title=str(cfg.get("title", "Precision_Recall_Curve" if curve_kind == "pr" else "ROC_Curve_Comparison")),
+        mode="roc_pr_curve",
+        subtype=curve_kind,
+        style_preset=str(cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET)),
+        journal_spec=cfg.get("journal_spec"),
+        theme=theme,
+        panels=[panel],
+        output_dir=cfg.get("output_dir"),
+        build_opju=bool(cfg.get("build_opju", True)),
+        summary_metrics={
+            "n_models": n_models,
+            "curve_kind": curve_kind,
+            "auroc_by_model": {str(c.get("name")): round(float(c.get("auroc", 0.0)), 4) for c in curves_list},
+        },
+        meta=fig_meta,
+    )
+
+
+def _compile_nmr_spectrum(
+    cfg: Dict[str, Any],
+    theme: Dict[str, Any],
+    loaded_tables: Optional[Dict[str, Any]],
+) -> FigureSpec:
+    """Compile `nmr_spectrum`: inverted chemical-shift δ (ppm) spectrum + elevated step-integral curves + multiplet peak callouts."""
+    import numpy as _np
+
+    tbl = _lookup_loaded_table(loaded_tables, cfg.get("table_key"), cfg.get("input_file"), "main")
+    raw_series = cfg.get("series") or cfg.get("spectra")
+    if not raw_series and tbl is not None:
+        raw_series = [
+            {
+                "name": str(cfg.get("name", "1H NMR")),
+                "x": _extract_column_from_table(tbl, cfg.get("x_col", 0)),
+                "y": _extract_column_from_table(tbl, cfg.get("y_col", 1)),
+                "integrals": cfg.get("integrals", []),
+            }
+        ]
+    if not isinstance(raw_series, (list, tuple)) or not raw_series:
+        raise ValueError("Mode 'nmr_spectrum' requires non-empty 'series' list.")
+
+    locale = str(cfg.get("locale", "en"))
+    clean_prefix = bool(cfg.get("clean_sample_prefix", False))
+    n_spec = len(raw_series)
+    scheme = str(cfg.get("color_scheme", "paired_semantic"))
+    roles = [s.get("role") if isinstance(s, dict) else None for s in raw_series]
+    resolved_cols = ot.resolve_series_colors(n_spec, roles=(roles if any(roles) else None), scheme=scheme)
+    base_lw = float(theme.get("curve_linewidth", 3.0))
+
+    compiled_series: List[SeriesSpec] = []
+    integral_series: List[SeriesSpec] = []
+    integral_records: List[Dict[str, Any]] = []
+    guides: List[GuideSpec] = _build_guides_from_cfg(cfg.get("guides", []), theme)
+
+    global_xmin = float("inf")
+    global_xmax = float("-inf")
+    global_ymin = float("inf")
+    global_ymax = float("-inf")
+    primary_x_arr: Optional[_np.ndarray] = None
+    primary_y_arr: Optional[_np.ndarray] = None
+
+    for idx, s_item in enumerate(raw_series):
+        if not isinstance(s_item, dict):
+            raise TypeError(f"nmr_spectrum series[{idx}] must be a dict.")
+        nm = ot.clean_semantic_sample_name(str(s_item.get("name", f"Spectrum {idx + 1}")), clean_prefix)
+        xv = _as_float_list(s_item.get("x"), f"series[{idx}].x")
+        yv = _as_float_list(s_item.get("y", s_item.get("values")), f"series[{idx}].y")
+        if not xv or not yv or len(xv) != len(yv):
+            raise ValueError(f"nmr_spectrum series {nm!r} requires matching non-empty x and y arrays.")
+        c_hex = ot.normalize_hex(str(s_item["color"])) if s_item.get("color") else (
+            "#111111" if n_spec == 1 and not s_item.get("role") else resolved_cols[idx % len(resolved_cols)]
+        )
+
+        x_arr = _np.asarray(xv, dtype=float)
+        y_arr = _np.asarray(yv, dtype=float)
+        if primary_x_arr is None:
+            primary_x_arr, primary_y_arr = x_arr, y_arr
+        global_xmin = min(global_xmin, float(_np.min(x_arr)))
+        global_xmax = max(global_xmax, float(_np.max(x_arr)))
+        global_ymin = min(global_ymin, float(_np.min(y_arr)))
+        global_ymax = max(global_ymax, float(_np.max(y_arr)))
+
+        compiled_series.append(
+            SeriesSpec(
+                name=nm,
+                x=xv,
+                y=yv,
+                color=c_hex,
+                role=s_item.get("role"),
+                line_style=str(s_item.get("line_style", "solid")),
+                line_width_pt=float(s_item.get("line_width_pt", max(0.85, round(base_lw * 0.72, 2)))),
+                marker_style="none",
+                x_unit="ppm",
+                y_unit="a.u.",
+            )
+        )
+
+        # Step-integral windows (`integrals` on series or top-level `cfg["integrals"]` for series 0)
+        int_windows = s_item.get("integrals") or (cfg.get("integrals") if idx == 0 else None) or []
+        if int_windows:
+            base_lvl = float(_np.percentile(y_arr, 10))
+            max_pk = max(float(_np.max(y_arr)) - base_lvl, 1e-9)
+            int_col = ot.normalize_hex(str(s_item.get("integral_color", "#D84B5C" if c_hex == "#111111" else "#A02333")))
+            for w_idx, win in enumerate(int_windows):
+                if not isinstance(win, dict) or not win.get("ppm_range"):
+                    continue
+                r0, r1 = float(win["ppm_range"][0]), float(win["ppm_range"][1])
+                lo_p, hi_p = min(r0, r1), max(r0, r1)
+                mask = (x_arr >= lo_p) & (x_arr <= hi_p)
+                if int(_np.sum(mask)) < 2:
+                    # Synthesize clean 12-point step across [hi_p -> lo_p] if sparse synthetic spectrum
+                    xw = _np.linspace(hi_p, lo_p, 12)
+                    yw = _np.interp(xw, _np.sort(x_arr), y_arr[_np.argsort(x_arr)])
+                else:
+                    xw_raw = x_arr[mask]
+                    yw_raw = y_arr[mask]
+                    desc_ord = _np.argsort(-xw_raw)  # downfield (hi_p) -> upfield (lo_p)
+                    xw = xw_raw[desc_ord]
+                    yw = yw_raw[desc_ord]
+                y_net = _np.maximum(0.0, yw - base_lvl)
+                dx_pos = _np.abs(_np.diff(xw))
+                trap_steps = 0.5 * (y_net[:-1] + y_net[1:]) * dx_pos
+                cum = _np.concatenate([[0.0], _np.cumsum(trap_steps)])
+                raw_area = float(cum[-1])
+                cum_norm = (cum / raw_area) if raw_area > 1e-12 else _np.linspace(0.0, 1.0, len(xw))
+                y_elev = base_lvl + (0.42 + (0.78 - 0.42) * cum_norm) * max_pk
+                int_lbl = str(win.get("label", f"Int {w_idx + 1}")).strip()
+                integral_series.append(
+                    SeriesSpec(
+                        name=f"Integral {int_lbl}",
+                        x=[round(float(v), 6) for v in xw],
+                        y=[round(float(v), 6) for v in y_elev],
+                        color=int_col,
+                        line_style="solid",
+                        line_width_pt=max(0.75, round(base_lw * 0.58, 2)),
+                        marker_style="none",
+                        meta={
+                            "is_nmr_integral": True,
+                            "skip_legend": True,
+                            "ppm_range": [lo_p, hi_p],
+                            "integral_label": int_lbl,
+                            "raw_area": round(raw_area, 6),
+                        },
+                    )
+                )
+                integral_records.append(
+                    {"spectrum": nm, "ppm_low": lo_p, "ppm_high": hi_p, "label": int_lbl, "raw_area": round(raw_area, 6)}
+                )
+                if int_lbl:
+                    guides.append(
+                        GuideSpec(
+                            kind="text",
+                            x=lo_p,
+                            y=float(y_elev[-1]) + 0.045 * max_pk,
+                            value=lo_p,
+                            label=int_lbl,
+                            color=int_col,
+                        )
+                    )
+
+    y_span = max(global_ymax - global_ymin, 1e-6)
+    for pk in (cfg.get("peaks") or []):
+        if isinstance(pk, dict) and pk.get("ppm") is not None:
+            ppm_v = float(pk["ppm"])
+            pk_lbl = str(pk.get("label", f"{ppm_v:.2f}")).strip()
+            if primary_x_arr is not None and primary_y_arr is not None:
+                near_mask = _np.abs(primary_x_arr - ppm_v) <= max(0.08, 0.015 * max(global_xmax - global_xmin, 1.0))
+                local_top = float(_np.max(primary_y_arr[near_mask])) if _np.any(near_mask) else global_ymax * 0.82
+            else:
+                local_top = global_ymax * 0.82
+            guides.append(
+                GuideSpec(
+                    kind="peak_tag",
+                    x=ppm_v,
+                    y=min(global_ymax + 0.18 * y_span, local_top + 0.06 * y_span),
+                    value=ppm_v,
+                    label=pk_lbl,
+                    color=str(pk.get("color", "#222222")),
+                )
+            )
+
+    all_series = compiled_series + integral_series
+    layer = LayerSpec(
+        layer_id="nmr_main",
+        mark="line_scatter",
+        y_axis="y1",
+        series=all_series,
+        color_scheme=scheme,
+        palette_colors=[s.color for s in all_series if s.color],
+        origin_plot_type=200,
+    )
+    x_pad = 0.03 * max(global_xmax - global_xmin, 0.5)
+    x_lims = tuple(cfg["x_limits"]) if cfg.get("x_limits") is not None else (global_xmin - x_pad, global_xmax + x_pad)
+    y_lims = tuple(cfg["y_limits"]) if cfg.get("y_limits") is not None else (
+        global_ymin - 0.05 * y_span,
+        global_ymax + 0.24 * y_span,
+    )
+    x_axis = AxisSpec(
+        which="x",
+        label=str(cfg.get("x_label", "Chemical Shift \\g(d) (ppm)")),
+        unit="ppm",
+        axis_kind="quantitative",
+        invert=bool(cfg.get("invert_x", True)),
+        limits=x_lims,
+    )
+    y1_axis = AxisSpec(
+        which="y1",
+        label=str(cfg.get("y_label", "Intensity (a.u.)")),
+        axis_kind="intensity_arbitrary",
+        limits=y_lims,
+    )
+
+    fig_meta: Dict[str, Any] = dict(cfg.get("meta") or {})
+    fig_meta["locale"] = locale
+    if integral_records:
+        fig_meta["nmr_integrals"] = integral_records
+
+    panel = PanelSpec(
+        panel_id="panel_main",
+        tag=str(cfg.get("tag", "a")),
+        x_axis=x_axis,
+        y1_axis=y1_axis,
+        layers=[layer],
+        guides=guides,
+        box_linewidth_pt=float(theme.get("figure_box_linewidth", 3.0)),
+        legend_style=str(cfg.get("legend_style", "corner_upper_left" if n_spec >= 2 else "none")),
+        meta={"nmr_integrals": integral_records, "locale": locale},
+    )
+    return FigureSpec(
+        title=str(cfg.get("title", "NMR_Chemical_Shift_Spectrum")),
+        mode="nmr_spectrum",
+        style_preset=str(cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET)),
+        journal_spec=cfg.get("journal_spec"),
+        theme=theme,
+        panels=[panel],
+        output_dir=cfg.get("output_dir"),
+        build_opju=bool(cfg.get("build_opju", True)),
+        summary_metrics={"n_spectra": n_spec, "n_integrals": len(integral_records)},
+        meta=fig_meta,
+    )
+
+
+def _compile_broken_axis_plot(
+    cfg: Dict[str, Any],
+    theme: Dict[str, Any],
+    loaded_tables: Optional[Dict[str, Any]],
+) -> FigureSpec:
+    """Compile `broken_axis_plot`: `line_scatter` or `bar_grouped_gradient` with native Origin `AxisSpec.breaks`."""
+    x_breaks = cfg.get("x_breaks") or []
+    y_breaks = cfg.get("y_breaks") or []
+    if not x_breaks and not y_breaks:
+        raise ValueError("Mode 'broken_axis_plot' requires non-empty 'x_breaks' and/or 'y_breaks'.")
+
+    geom = str(cfg.get("geom") or cfg.get("subtype") or "").strip().lower()
+    is_bar = geom in ("bar", "bar_grouped_gradient", "column") or (
+        bool(cfg.get("categories"))
+        and all(isinstance(s, dict) and s.get("x") is None for s in (cfg.get("series") or []))
+    )
+
+    if is_bar:
+        fig = _compile_bar_grouped_gradient(cfg, theme, loaded_tables)
+    else:
+        ly = _compile_line_scatter_layer(cfg, theme, loaded_tables, y_axis="y1", layer_id="broken_curves")
+        x_scale = "log10" if cfg.get("log_x", False) else str(cfg.get("x_scale", "linear"))
+        y_scale = "log10" if cfg.get("log_y", False) else str(cfg.get("y_scale", "linear"))
+        panel = PanelSpec(
+            panel_id="panel_main",
+            tag=str(cfg.get("tag", "a")),
+            x_axis=AxisSpec(
+                which="x",
+                label=str(cfg.get("x_label", "X")),
+                unit=cfg.get("x_unit"),
+                axis_kind="quantitative",
+                scale=x_scale,
+                invert=bool(cfg.get("invert_x", False)),
+                limits=tuple(cfg["x_limits"]) if cfg.get("x_limits") is not None else None,
+                breaks=x_breaks,
+            ),
+            y1_axis=AxisSpec(
+                which="y1",
+                label=str(cfg.get("y_label", "Y")),
+                unit=cfg.get("y_unit"),
+                axis_kind=str(cfg.get("y_axis_kind", "quantitative")),
+                scale=y_scale,
+                invert=bool(cfg.get("invert_y", False)),
+                limits=tuple(cfg["y_limits"]) if cfg.get("y_limits") is not None else None,
+                breaks=y_breaks,
+            ),
+            layers=[ly],
+            guides=_build_guides_from_cfg(cfg.get("guides", []), theme),
+            box_linewidth_pt=float(theme.get("figure_box_linewidth", 3.0)),
+            legend_style=str(cfg.get("legend_style", "corner_upper_left" if len(ly.series) >= 2 else "none")),
+            meta={"locale": str(cfg.get("locale", "en"))},
+        )
+        fig = FigureSpec(
+            title=str(cfg.get("title", "Broken_Axis_Plot")),
+            mode="broken_axis_plot",
+            subtype="line_scatter",
+            style_preset=str(cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET)),
+            journal_spec=cfg.get("journal_spec"),
+            theme=theme,
+            panels=[panel],
+            output_dir=cfg.get("output_dir"),
+            build_opju=bool(cfg.get("build_opju", True)),
+            meta=dict(cfg.get("meta") or {}),
+        )
+
+    fig.mode = "broken_axis_plot"
+    fig.journal_spec = cfg.get("journal_spec") or fig.journal_spec
+    p0 = fig.panels[0]
+    if x_breaks:
+        p0.x_axis.breaks = _normalize_axis_breaks(x_breaks)
+    if y_breaks:
+        p0.y1_axis.breaks = _normalize_axis_breaks(y_breaks)
+    p0.validate()
+    return fig
+
+
+def _compile_dual_x_optical_spectrum(
+    cfg: Dict[str, Any],
+    theme: Dict[str, Any],
+    loaded_tables: Optional[Dict[str, Any]],
+) -> FigureSpec:
+    """Compile `dual_x_optical_spectrum`: optical/Arrhenius curves with nonlinear formula-linked top X axis (`1239.84193/x`)."""
+    block = copy.deepcopy(cfg)
+    block.setdefault("marker_style", "none")
+    ly = _compile_line_scatter_layer(block, theme, loaded_tables, y_axis="y1", layer_id="optical_curves")
+
+    linked_cfg = cfg.get("linked_top_x") or cfg.get("linked_top") or {
+        "label": "Photon Energy (eV)",
+        "formula": "1239.84193/x",
+    }
+    linked_norm = _normalize_linked_top(linked_cfg)
+
+    all_x: List[float] = []
+    for s in ly.series:
+        for xv in (s.x or []):
+            if isinstance(xv, (int, float)) and math.isfinite(float(xv)):
+                all_x.append(float(xv))
+    if cfg.get("x_limits") is not None:
+        x_lims: Optional[Tuple[float, float]] = (float(cfg["x_limits"][0]), float(cfg["x_limits"][1]))
+    elif all_x:
+        x_lo, x_hi = min(all_x), max(all_x)
+        # Keep reciprocal top-axis domain strictly away from zero
+        if linked_norm and "/x" in linked_norm["formula"].lower() and x_lo <= 0.0:
+            raise ValueError(
+                f"dual_x_optical_spectrum with reciprocal formula {linked_norm['formula']!r} requires strictly positive X values, got min(x)={x_lo}."
+            )
+        x_lims = (x_lo, x_hi)
+    else:
+        x_lims = None
+
+    x_axis = AxisSpec(
+        which="x",
+        label=str(cfg.get("x_label", "Wavelength \\g(l) (nm)")),
+        unit=cfg.get("x_unit", "nm"),
+        axis_kind="quantitative",
+        scale=str(cfg.get("x_scale", "linear")),
+        invert=bool(cfg.get("invert_x", False)),
+        limits=x_lims,
+        linked_top=linked_norm,
+    )
+    y1_axis = AxisSpec(
+        which="y1",
+        label=str(cfg.get("y_label", "Absorbance (a.u.)")),
+        unit=cfg.get("y_unit"),
+        axis_kind=str(cfg.get("y_axis_kind", "quantitative")),
+        scale=str(cfg.get("y_scale", "linear")),
+        limits=tuple(cfg["y_limits"]) if cfg.get("y_limits") is not None else None,
+    )
+    locale = str(cfg.get("locale", "en"))
+    panel = PanelSpec(
+        panel_id="panel_main",
+        tag=str(cfg.get("tag", "a")),
+        x_axis=x_axis,
+        y1_axis=y1_axis,
+        layers=[ly],
+        guides=_build_guides_from_cfg(cfg.get("guides", []), theme),
+        box_linewidth_pt=float(theme.get("figure_box_linewidth", 3.0)),
+        legend_style=str(cfg.get("legend_style", "corner_upper_right" if len(ly.series) >= 2 else "none")),
+        meta={"linked_top_x": linked_norm, "locale": locale},
+    )
+    fig_meta = dict(cfg.get("meta") or {})
+    fig_meta["locale"] = locale
+    fig_meta["linked_top_x"] = linked_norm
+    return FigureSpec(
+        title=str(cfg.get("title", "Dual_X_Optical_Spectrum")),
+        mode="dual_x_optical_spectrum",
+        style_preset=str(cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET)),
+        journal_spec=cfg.get("journal_spec"),
+        theme=theme,
+        panels=[panel],
+        output_dir=cfg.get("output_dir"),
+        build_opju=bool(cfg.get("build_opju", True)),
+        summary_metrics={"n_series": len(ly.series), "top_x_formula": linked_norm["formula"] if linked_norm else ""},
+        meta=fig_meta,
+    )
+
+
+def _compile_ternary_diagram(
+    cfg: Dict[str, Any],
+    theme: Dict[str, Any],
+    loaded_tables: Optional[Dict[str, Any]],
+) -> FigureSpec:
+    """Compile `ternary_diagram`: 3-component `(A + B + C = 100%)` phase/geochemical ternary diagram (`type=245`)."""
+    tbl = _lookup_loaded_table(loaded_tables, cfg.get("table_key"), cfg.get("input_file"), "main")
+    raw_series = cfg.get("series")
+    if not raw_series and tbl is not None:
+        raw_series = [
+            {
+                "name": str(cfg.get("name", "Compositions")),
+                "a": _extract_column_from_table(tbl, cfg.get("a_col", 0)),
+                "b": _extract_column_from_table(tbl, cfg.get("b_col", 1)),
+                "c": _extract_column_from_table(tbl, cfg.get("c_col", 2)),
+            }
+        ]
+    if not isinstance(raw_series, (list, tuple)) or not raw_series:
+        raise ValueError("Mode 'ternary_diagram' requires non-empty 'series' list with (a, b, c) arrays.")
+
+    raw_comp_lbls = cfg.get("component_labels") or cfg.get("axes_labels") or [
+        "Component A (%)",
+        "Component B (%)",
+        "Component C (%)",
+    ]
+    if len(raw_comp_lbls) != 3:
+        raise ValueError(f"ternary_diagram component_labels must have 3 labels, got {len(raw_comp_lbls)}.")
+    comp_labels = [str(lbl) for lbl in raw_comp_lbls]
+
+    locale = str(cfg.get("locale", "en"))
+    clean_prefix = bool(cfg.get("clean_sample_prefix", False))
+    n_ser = len(raw_series)
+    scheme = str(cfg.get("color_scheme", "paired_semantic" if n_ser <= 6 else "okabe_ito"))
+    roles = [s.get("role") if isinstance(s, dict) else None for s in raw_series]
+    resolved_cols = ot.resolve_series_colors(n_ser, roles=(roles if any(roles) else None), scheme=scheme)
+    base_lw = float(theme.get("curve_linewidth", 3.0))
+    base_mk = float(theme.get("origin_native", {}).get("marker_size_pt", 7.5))
+
+    t_series: List[SeriesSpec] = []
+    for idx, s_item in enumerate(raw_series):
+        if not isinstance(s_item, dict):
+            raise TypeError(f"ternary_diagram series[{idx}] must be a dict.")
+        nm = ot.clean_semantic_sample_name(str(s_item.get("name", f"Phase {idx + 1}")), clean_prefix)
+        av = _as_float_list(s_item.get("a", s_item.get("x")), f"series[{idx}].a") or []
+        bv = _as_float_list(s_item.get("b", s_item.get("y")), f"series[{idx}].b") or []
+        cv = _as_float_list(s_item.get("c", s_item.get("z")), f"series[{idx}].c") or []
+        if not (len(av) == len(bv) == len(cv) and len(av) >= 1):
+            raise ValueError(f"ternary_diagram series {nm!r} requires non-empty equal-length (a, b, c) arrays.")
+
+        a_norm: List[float] = []
+        b_norm: List[float] = []
+        c_norm: List[float] = []
+        for p_i, (ai, bi, ci) in enumerate(zip(av, bv, cv)):
+            if ai < -1e-9 or bi < -1e-9 or ci < -1e-9:
+                raise ValueError(f"ternary_diagram series {nm!r} point {p_i} has negative composition ({ai}, {bi}, {ci}).")
+            a_c, b_c, c_c = max(0.0, ai), max(0.0, bi), max(0.0, ci)
+            tot = a_c + b_c + c_c
+            if tot <= 1e-12:
+                raise ValueError(f"ternary_diagram series {nm!r} point {p_i} sums to zero.")
+            a_norm.append(round(100.0 * a_c / tot, 6))
+            b_norm.append(round(100.0 * b_c / tot, 6))
+            c_norm.append(round(100.0 * c_c / tot, 6))
+
+        c_hex = ot.normalize_hex(str(s_item["color"])) if s_item.get("color") else resolved_cols[idx % len(resolved_cols)]
+        mk_raw = str(s_item.get("marker_style", "circle_solid"))
+        if mk_raw == "circle":
+            mk_raw = "circle_solid"
+        elif mk_raw == "open_circle":
+            mk_raw = "circle_open"
+        l_style = str(s_item.get("line_style", "none"))
+
+        t_series.append(
+            SeriesSpec(
+                name=nm,
+                x=a_norm,
+                y=b_norm,
+                role=s_item.get("role"),
+                color=c_hex,
+                line_style=l_style,
+                line_width_pt=float(s_item.get("line_width_pt", base_lw)),
+                marker_style=mk_raw,
+                marker_size_pt=float(s_item.get("marker_size_pt", base_mk)),
+                x_unit="%",
+                y_unit="%",
+                z_unit="%",
+                meta={
+                    "ternary_a": a_norm,
+                    "ternary_b": b_norm,
+                    "ternary_c": c_norm,
+                    "component_labels": comp_labels,
+                },
+            )
+        )
+
+    layer = LayerSpec(
+        layer_id="ternary_main",
+        mark="ternary_scatter",
+        y_axis="y1",
+        series=t_series,
+        color_scheme=scheme,
+        palette_colors=[s.color for s in t_series if s.color],
+        origin_template="Ternary",
+        origin_plot_type=245,
+    )
+    panel = PanelSpec(
+        panel_id="panel_main",
+        tag=str(cfg.get("tag", "a")),
+        coord="ternary",
+        x_axis=AxisSpec(which="x", label=comp_labels[0], unit="%", limits=(0.0, 100.0)),
+        y1_axis=AxisSpec(which="y1", label=comp_labels[1], unit="%", limits=(0.0, 100.0)),
+        z_axis=AxisSpec(which="z", label=comp_labels[2], unit="%", limits=(0.0, 100.0)),
+        layers=[layer],
+        equal_aspect=True,
+        box_linewidth_pt=float(theme.get("figure_box_linewidth", 3.0)),
+        legend_style=str(cfg.get("legend_style", "corner_upper_right")),
+        meta={"component_labels": comp_labels, "locale": locale},
+    )
+    fig_meta = dict(cfg.get("meta") or {})
+    fig_meta["locale"] = locale
+    fig_meta["component_labels"] = comp_labels
+    return FigureSpec(
+        title=str(cfg.get("title", "Ternary_Phase_Diagram")),
+        mode="ternary_diagram",
+        style_preset=str(cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET)),
+        journal_spec=cfg.get("journal_spec"),
+        theme=theme,
+        panels=[panel],
+        output_dir=cfg.get("output_dir"),
+        build_opju=bool(cfg.get("build_opju", True)),
+        summary_metrics={"n_series": n_ser, "component_labels": comp_labels},
+        meta=fig_meta,
+    )
+
+
+def _compile_polar_radar_plot(
+    cfg: Dict[str, Any],
+    theme: Dict[str, Any],
+    loaded_tables: Optional[Dict[str, Any]],
+) -> FigureSpec:
+    """Compile `polar_radar_plot`: radiation/anisotropy `'polar'` (`0..360°`) or multi-spoke ML/sensor `'radar'`."""
+    raw_cats = cfg.get("categories") or cfg.get("spokes") or cfg.get("metrics")
+    subtype = str(cfg.get("subtype") or ("radar" if raw_cats else "polar")).strip().lower()
+    if subtype not in ("polar", "radar"):
+        raise ValueError(f"polar_radar_plot subtype must be 'polar' or 'radar', got {subtype!r}")
+
+    raw_series = cfg.get("series") or cfg.get("models")
+    if not isinstance(raw_series, (list, tuple)) or not raw_series:
+        raise ValueError("Mode 'polar_radar_plot' requires non-empty 'series' list.")
+
+    locale = str(cfg.get("locale", "en"))
+    clean_prefix = bool(cfg.get("clean_sample_prefix", False))
+    n_ser = len(raw_series)
+    scheme = str(cfg.get("color_scheme", "paired_semantic" if n_ser <= 6 else "okabe_ito"))
+    roles = [s.get("role") if isinstance(s, dict) else None for s in raw_series]
+    resolved_cols = ot.resolve_series_colors(n_ser, roles=(roles if any(roles) else None), scheme=scheme)
+    base_lw = float(theme.get("curve_linewidth", 3.0))
+    base_mk = float(theme.get("origin_native", {}).get("marker_size_pt", 7.5))
+
+    compiled: List[SeriesSpec] = []
+    max_r = 0.0
+    min_r = 0.0
+
+    if subtype == "radar":
+        if not raw_cats or len(raw_cats) < 3:
+            raise ValueError("polar_radar_plot with subtype='radar' requires >= 3 'categories' (spoke names).")
+        cats = [str(c) for c in raw_cats]
+        for idx, s_item in enumerate(raw_series):
+            if not isinstance(s_item, dict):
+                raise TypeError(f"polar_radar_plot series[{idx}] must be a dict.")
+            nm = ot.clean_semantic_sample_name(str(s_item.get("name", f"Model {idx + 1}")), clean_prefix)
+            yv = _as_float_list(s_item.get("y", s_item.get("values", s_item.get("r"))), f"series[{idx}].y") or []
+            if len(yv) != len(cats):
+                raise ValueError(f"Radar series {nm!r} length ({len(yv)}) must match categories ({len(cats)}).")
+            max_r = max(max_r, max(yv))
+            min_r = min(min_r, min(yv))
+            c_hex = ot.normalize_hex(str(s_item["color"])) if s_item.get("color") else resolved_cols[idx % len(resolved_cols)]
+            compiled.append(
+                SeriesSpec(
+                    name=nm,
+                    x=list(cats),
+                    y=yv,
+                    role=s_item.get("role"),
+                    color=c_hex,
+                    line_style="solid",
+                    line_width_pt=float(s_item.get("line_width_pt", base_lw)),
+                    marker_style=str(s_item.get("marker_style", "circle_solid")),
+                    marker_size_pt=float(s_item.get("marker_size_pt", base_mk)),
+                    fill_alpha=float(s_item.get("fill_alpha", cfg.get("fill_alpha", 0.18))),
+                    meta={"coord": "radar", "categories": list(cats)},
+                )
+            )
+        r_top = 1.0 if max_r <= 1.05 else (100.0 if 50.0 < max_r <= 105.0 else round(max_r * 1.12, 4))
+        r_lims = tuple(cfg["r_limits"]) if cfg.get("r_limits") is not None else (min(0.0, min_r), r_top)
+        layer = LayerSpec(
+            layer_id="radar_main",
+            mark="polar_line",
+            y_axis="y1",
+            series=compiled,
+            categories=cats,
+            color_scheme=scheme,
+            palette_colors=[s.color for s in compiled if s.color],
+            origin_template="Polar",
+            origin_plot_type=192,
+        )
+        panel = PanelSpec(
+            panel_id="panel_main",
+            tag=str(cfg.get("tag", "a")),
+            coord="radar",
+            x_axis=AxisSpec(which="x", label="", axis_kind="categorical", categories=cats),
+            y1_axis=AxisSpec(which="y1", label=str(cfg.get("y_label", "Score")), limits=r_lims),
+            layers=[layer],
+            equal_aspect=True,
+            box_linewidth_pt=float(theme.get("figure_box_linewidth", 3.0)),
+            legend_style=str(cfg.get("legend_style", "corner_upper_right")),
+            meta={"categories": cats, "radar_max": r_lims[1], "locale": locale},
+        )
+    else:
+        is_rad = str(cfg.get("angle_unit", "deg")).strip().lower().startswith("rad")
+        for idx, s_item in enumerate(raw_series):
+            if not isinstance(s_item, dict):
+                raise TypeError(f"polar_radar_plot series[{idx}] must be a dict.")
+            nm = ot.clean_semantic_sample_name(str(s_item.get("name", f"Pattern {idx + 1}")), clean_prefix)
+            th_raw = _as_float_list(s_item.get("theta", s_item.get("angle", s_item.get("x"))), f"series[{idx}].theta") or []
+            rv = _as_float_list(s_item.get("r", s_item.get("y", s_item.get("values"))), f"series[{idx}].r") or []
+            if not th_raw or len(th_raw) != len(rv):
+                raise ValueError(f"Polar series {nm!r} requires matching non-empty theta and r arrays.")
+            th_deg = [round(v * 180.0 / math.pi, 6) for v in th_raw] if is_rad else th_raw
+            max_r = max(max_r, max(rv))
+            min_r = min(min_r, min(rv))
+            c_hex = ot.normalize_hex(str(s_item["color"])) if s_item.get("color") else resolved_cols[idx % len(resolved_cols)]
+            compiled.append(
+                SeriesSpec(
+                    name=nm,
+                    x=th_deg,
+                    y=rv,
+                    role=s_item.get("role"),
+                    color=c_hex,
+                    line_style=str(s_item.get("line_style", "solid")),
+                    line_width_pt=float(s_item.get("line_width_pt", base_lw)),
+                    marker_style=str(s_item.get("marker_style", "none")),
+                    marker_size_pt=float(s_item.get("marker_size_pt", base_mk)),
+                    x_unit="deg",
+                    y_unit=cfg.get("r_unit", cfg.get("y_unit")),
+                    meta={"coord": "polar", "theta_deg": th_deg},
+                )
+            )
+        r_lims = tuple(cfg["r_limits"]) if cfg.get("r_limits") is not None else (
+            min(0.0, min_r),
+            max(1.0, round(max_r * 1.12, 4)),
+        )
+        layer = LayerSpec(
+            layer_id="polar_main",
+            mark="polar_line",
+            y_axis="y1",
+            series=compiled,
+            color_scheme=scheme,
+            palette_colors=[s.color for s in compiled if s.color],
+            origin_template="Polar",
+            origin_plot_type=192,
+        )
+        panel = PanelSpec(
+            panel_id="panel_main",
+            tag=str(cfg.get("tag", "a")),
+            coord="polar",
+            x_axis=AxisSpec(which="x", label=str(cfg.get("x_label", "Angle (deg)")), unit="deg", limits=(0.0, 360.0), major_step=45.0),
+            y1_axis=AxisSpec(which="y1", label=str(cfg.get("y_label", cfg.get("r_label", "Amplitude"))), limits=r_lims),
+            layers=[layer],
+            equal_aspect=True,
+            box_linewidth_pt=float(theme.get("figure_box_linewidth", 3.0)),
+            legend_style=str(cfg.get("legend_style", "corner_upper_right")),
+            meta={"locale": locale},
+        )
+
+    fig_meta = dict(cfg.get("meta") or {})
+    fig_meta["locale"] = locale
+    return FigureSpec(
+        title=str(cfg.get("title", "Radar_Comparison" if subtype == "radar" else "Polar_Angular_Plot")),
+        mode="polar_radar_plot",
+        subtype=subtype,
+        style_preset=str(cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET)),
+        journal_spec=cfg.get("journal_spec"),
+        theme=theme,
+        panels=[panel],
+        output_dir=cfg.get("output_dir"),
+        build_opju=bool(cfg.get("build_opju", True)),
+        summary_metrics={"n_series": n_ser, "coord": subtype},
+        meta=fig_meta,
+    )
+
+
+def _compile_multi_track_profile(
+    cfg: Dict[str, Any],
+    theme: Dict[str, Any],
+    loaded_tables: Optional[Dict[str, Any]],
+) -> FigureSpec:
+    """Compile `multi_track_profile`: K side-by-side ocean/borehole/ice-core vertical tracks sharing Depth/Age Y axis."""
+    tbl = _lookup_loaded_table(loaded_tables, cfg.get("table_key"), cfg.get("input_file"), "main")
+    raw_tracks = cfg.get("tracks") or cfg.get("panels")
+    if not raw_tracks and tbl is not None and cfg.get("track_cols"):
+        d_vals = _extract_column_from_table(tbl, cfg.get("depth_col", 0))
+        raw_tracks = [
+            {"name": str(tc), "x_label": str(tc), "x": _extract_column_from_table(tbl, tc), "depth": d_vals}
+            for tc in cfg["track_cols"]
+        ]
+    if not isinstance(raw_tracks, (list, tuple)) or not raw_tracks:
+        raise ValueError("Mode 'multi_track_profile' requires non-empty 'tracks' list.")
+
+    K = len(raw_tracks)
+    depth_label = str(cfg.get("depth_label", cfg.get("y_label", "Depth (m)")))
+    depth_unit = cfg.get("depth_unit", cfg.get("y_unit"))
+    depth_invert = bool(cfg.get("depth_invert", cfg.get("invert_y", True)))
+    locale = str(cfg.get("locale", "en"))
+
+    norm_horizons: List[Dict[str, Any]] = []
+    for h_idx, hz in enumerate(cfg.get("horizons") or []):
+        if isinstance(hz, dict) and hz.get("depth_start") is not None and hz.get("depth_end") is not None:
+            norm_horizons.append(
+                {
+                    "depth_start": float(hz["depth_start"]),
+                    "depth_end": float(hz["depth_end"]),
+                    "label": str(hz.get("label", f"Horizon {h_idx + 1}")),
+                    "color": ot.normalize_hex(str(hz.get("color", "#DCE8F5"))),
+                }
+            )
+
+    scheme = str(cfg.get("color_scheme", "okabe_ito" if K > 4 else "paired_semantic"))
+    track_cols = ot.resolve_series_colors(K, scheme=scheme)
+    base_lw = float(theme.get("curve_linewidth", 3.0))
+    comp_lw = float(theme.get("composite_print_profile", {}).get("box_linewidth_pt", min(2.0, float(theme.get("figure_box_linewidth", 3.0)))))
+
+    all_depths: List[float] = []
+    parsed_tracks: List[Tuple[Dict[str, Any], List[SeriesSpec]]] = []
+
+    for idx, tr in enumerate(raw_tracks):
+        if not isinstance(tr, dict):
+            raise TypeError(f"multi_track_profile tracks[{idx}] must be a dict.")
+        tr_nm = str(tr.get("name", f"Track {idx + 1}"))
+        tr_c = ot.normalize_hex(str(tr["color"])) if tr.get("color") else track_cols[idx % len(track_cols)]
+
+        sub_series_raw = tr.get("series")
+        if not sub_series_raw:
+            sub_series_raw = [
+                {
+                    "name": tr_nm,
+                    "x": tr.get("x", tr.get("values")),
+                    "depth": tr.get("depth", tr.get("y", cfg.get("depth"))),
+                    "color": tr_c,
+                    "line_style": tr.get("line_style", "solid"),
+                    "marker_style": tr.get("marker_style", "circle_solid"),
+                }
+            ]
+
+        tr_specs: List[SeriesSpec] = []
+        for s_i, s_it in enumerate(sub_series_raw):
+            xv = _as_float_list(s_it.get("x", s_it.get("values")), f"tracks[{idx}].x") or []
+            dv = _as_float_list(s_it.get("depth", s_it.get("y", tr.get("depth", cfg.get("depth")))), f"tracks[{idx}].depth") or []
+            if not xv or len(xv) != len(dv):
+                raise ValueError(f"Track {tr_nm!r} requires matching non-empty 'x' and 'depth' arrays.")
+            all_depths.extend(dv)
+            sc_hex = ot.normalize_hex(str(s_it["color"])) if s_it.get("color") else tr_c
+            tr_specs.append(
+                SeriesSpec(
+                    name=str(s_it.get("name", tr_nm)),
+                    x=xv,
+                    y=dv,
+                    y_err=_as_float_list(s_it.get("y_err"), f"tracks[{idx}].y_err"),
+                    color=sc_hex,
+                    line_style=str(s_it.get("line_style", "solid")),
+                    line_width_pt=float(s_it.get("line_width_pt", max(0.85, round(base_lw * 0.85, 2)))),
+                    marker_style=str(s_it.get("marker_style", "circle_solid" if len(xv) <= 18 else "none")),
+                    marker_size_pt=float(s_it.get("marker_size_pt", float(theme.get("origin_native", {}).get("marker_size_pt", 6.5)) * 0.82)),
+                    x_unit=tr.get("x_unit"),
+                    y_unit=depth_unit,
+                    meta={"track_index": idx, "track_name": tr_nm, "depth_label": depth_label},
+                )
+            )
+        parsed_tracks.append((tr, tr_specs))
+
+    raw_d_lims = cfg.get("depth_limits") or cfg.get("y_limits")
+    if raw_d_lims is not None:
+        d_min, d_max = float(raw_d_lims[0]), float(raw_d_lims[1])
+    else:
+        d_lo, d_hi = min(all_depths), max(all_depths)
+        d_pad = 0.03 * max(d_hi - d_lo, 1.0)
+        d_min = 0.0 if (d_lo >= 0.0 and d_lo <= 0.08 * max(d_hi, 1.0)) else (d_lo - d_pad)
+        d_max = d_hi + d_pad
+
+    panels: List[PanelSpec] = []
+    for idx, (tr, tr_specs) in enumerate(parsed_tracks):
+        tr_nm = str(tr.get("name", f"Track {idx + 1}"))
+        has_mk = any(s.marker_style != "none" for s in tr_specs)
+        has_ln = any(s.line_style != "none" for s in tr_specs)
+        pid_plot = 202 if (has_mk and has_ln) else (201 if has_mk else 200)
+        ly = LayerSpec(
+            layer_id=f"track_layer_{idx + 1}",
+            mark="line_scatter",
+            y_axis="y1",
+            series=tr_specs,
+            color_scheme=scheme,
+            palette_colors=[s.color for s in tr_specs if s.color],
+            origin_plot_type=pid_plot,
+        )
+        tr_xlims = tuple(tr["x_limits"]) if tr.get("x_limits") is not None else None
+        panels.append(
+            PanelSpec(
+                panel_id=f"track_{idx + 1}",
+                tag=chr(ord("a") + idx),
+                row=0,
+                col=idx,
+                x_axis=AxisSpec(
+                    which="x",
+                    label=str(tr.get("x_label", tr_nm)),
+                    unit=tr.get("x_unit"),
+                    axis_kind="quantitative",
+                    scale=str(tr.get("x_scale", "linear")),
+                    limits=tr_xlims,
+                ),
+                y1_axis=AxisSpec(
+                    which="y1",
+                    label=depth_label if idx == 0 else "",
+                    unit=depth_unit,
+                    axis_kind="quantitative",
+                    invert=depth_invert,
+                    limits=(d_min, d_max),
+                ),
+                layers=[ly],
+                guides=_build_guides_from_cfg(tr.get("guides", []), theme),
+                share_y_with="track_1" if idx > 0 else None,
+                box_linewidth_pt=comp_lw,
+                legend_style=str(tr.get("legend_style", "corner_upper_right" if len(tr_specs) > 1 else "none")),
+                meta={
+                    "multi_track": True,
+                    "track_index": idx,
+                    "n_tracks": K,
+                    "track_name": tr_nm,
+                    "depth_label": depth_label,
+                    "horizons": norm_horizons,
+                    "locale": locale,
+                },
+            )
+        )
+
+    w_ratios = [float(r) for r in cfg.get("width_ratios", [1.0] * K)]
+    fig_meta = dict(cfg.get("meta") or {})
+    fig_meta["locale"] = locale
+    fig_meta["horizons"] = norm_horizons
+    fig_meta["depth_limits"] = [d_min, d_max]
+    fig_meta["depth_invert"] = depth_invert
+    fig_meta["depth_label"] = depth_label
+
+    return FigureSpec(
+        title=str(cfg.get("title", "Multi_Track_Stratigraphic_Profile")),
+        mode="multi_track_profile",
+        style_preset=str(cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET)),
+        journal_spec=cfg.get("journal_spec"),
+        theme=theme,
+        nrows=1,
+        ncols=K,
+        width_ratios=w_ratios,
+        height_ratios=[1.0],
+        panels=panels,
+        output_dir=cfg.get("output_dir"),
+        build_opju=bool(cfg.get("build_opju", True)),
+        summary_metrics={"n_tracks": K, "depth_range": [round(d_min, 4), round(d_max, 4)], "n_horizons": len(norm_horizons)},
+        meta=fig_meta,
+    )
+
+
+def _compile_vector_quiver_field(
+    cfg: Dict[str, Any],
+    theme: Dict[str, Any],
+    loaded_tables: Optional[Dict[str, Any]],
+) -> FigureSpec:
+    """Compile `vector_quiver_field`: 2D `(x, y, u, v)` quiver arrows (`type=218`) + optional background scalar contour."""
+    import numpy as _np
+
+    tbl = _lookup_loaded_table(loaded_tables, cfg.get("table_key"), cfg.get("input_file"), "main")
+    v_src = cfg.get("vectors") if isinstance(cfg.get("vectors"), dict) else (
+        cfg["series"][0] if isinstance(cfg.get("series"), list) and cfg["series"] and isinstance(cfg["series"][0], dict) else cfg
+    )
+
+    x_raw = v_src.get("x") if v_src.get("x") is not None else (_extract_column_from_table(tbl, cfg.get("x_col", "x")) if tbl is not None else None)
+    y_raw = v_src.get("y") if v_src.get("y") is not None else (_extract_column_from_table(tbl, cfg.get("y_col", "y")) if tbl is not None else None)
+    u_raw = v_src.get("u") if v_src.get("u") is not None else (_extract_column_from_table(tbl, cfg.get("u_col", "u")) if tbl is not None and cfg.get("u_col") else None)
+    v_raw = v_src.get("v") if v_src.get("v") is not None else (_extract_column_from_table(tbl, cfg.get("v_col", "v")) if tbl is not None and cfg.get("v_col") else None)
+    xe_raw = v_src.get("x_end", v_src.get("x2"))
+    ye_raw = v_src.get("y_end", v_src.get("y2"))
+
+    if x_raw is None or y_raw is None:
+        raise ValueError("Mode 'vector_quiver_field' requires 'x' and 'y' vector coordinates.")
+
+    x_arr = _np.asarray(x_raw, dtype=float).ravel()
+    y_arr = _np.asarray(y_raw, dtype=float).ravel()
+    if len(x_arr) == 0 or len(x_arr) != len(y_arr):
+        raise ValueError("vector_quiver_field requires equal-length non-empty 'x' and 'y' arrays.")
+
+    has_explicit_ends = xe_raw is not None and ye_raw is not None
+    if has_explicit_ends:
+        xe_arr = _np.asarray(xe_raw, dtype=float).ravel()
+        ye_arr = _np.asarray(ye_raw, dtype=float).ravel()
+        if len(xe_arr) != len(x_arr) or len(ye_arr) != len(y_arr):
+            raise ValueError("vector_quiver_field 'x_end'/'y_end' must match length of 'x'/'y'.")
+        u_arr = _np.asarray(u_raw, dtype=float).ravel() if u_raw is not None else (xe_arr - x_arr)
+        v_arr = _np.asarray(v_raw, dtype=float).ravel() if v_raw is not None else (ye_arr - y_arr)
+        arrow_scale = 1.0
+    elif u_raw is not None and v_raw is not None:
+        u_arr = _np.asarray(u_raw, dtype=float).ravel()
+        v_arr = _np.asarray(v_raw, dtype=float).ravel()
+        if len(u_arr) != len(x_arr) or len(v_arr) != len(y_arr):
+            raise ValueError("vector_quiver_field 'u'/'v' must match length of 'x'/'y'.")
+        mag_tmp = _np.hypot(u_arr, v_arr)
+        p95_mag = float(_np.percentile(mag_tmp, 95)) if len(mag_tmp) > 0 else 1.0
+        if cfg.get("arrow_scale") is not None:
+            arrow_scale = float(cfg["arrow_scale"])
+        elif bool(cfg.get("raw_displacement", False)):
+            arrow_scale = 1.0
+        else:
+            ux = _np.unique(_np.round(x_arr, 8))
+            uy = _np.unique(_np.round(y_arr, 8))
+            dx_g = float(_np.median(_np.diff(ux))) if len(ux) >= 2 else max(1e-3, 0.1 * float(_np.ptp(x_arr) or 1.0))
+            dy_g = float(_np.median(_np.diff(uy))) if len(uy) >= 2 else max(1e-3, 0.1 * float(_np.ptp(y_arr) or 1.0))
+            arrow_scale = (0.78 * min(dx_g, dy_g) / p95_mag) if p95_mag > 1e-12 else 1.0
+        xe_arr = x_arr + arrow_scale * u_arr
+        ye_arr = y_arr + arrow_scale * v_arr
+    else:
+        raise ValueError("Mode 'vector_quiver_field' requires either ('u', 'v') or ('x_end', 'y_end').")
+
+    mag_arr = _np.hypot(u_arr, v_arr)
+
+    mx = cfg.get("matrix_x", cfg.get("x_grid"))
+    my = cfg.get("matrix_y", cfg.get("y_grid"))
+    mz = cfg.get("matrix_z", cfg.get("z_matrix"))
+    compute_bg = bool(cfg.get("compute_magnitude_bg", False))
+
+    if mz is None and compute_bg:
+        ux = _np.unique(_np.round(x_arr, 8))
+        uy = _np.unique(_np.round(y_arr, 8))
+        if len(ux) >= 2 and len(uy) >= 2 and len(ux) * len(uy) == len(x_arr):
+            z_grid = _np.zeros((len(uy), len(ux)), dtype=float)
+            ix_map = {float(v): i for i, v in enumerate(ux)}
+            iy_map = {float(v): j for j, v in enumerate(uy)}
+            for xi, yi, mi in zip(_np.round(x_arr, 8), _np.round(y_arr, 8), mag_arr):
+                z_grid[iy_map[float(yi)], ix_map[float(xi)]] = float(mi)
+            mx = [float(v) for v in ux]
+            my = [float(v) for v in uy]
+            mz = z_grid.tolist()
+        elif len(x_arr) >= 4:
+            gx = _np.linspace(float(_np.min(x_arr)), float(_np.max(x_arr)), 24)
+            gy = _np.linspace(float(_np.min(y_arr)), float(_np.max(y_arr)), 24)
+            gxx, gyy = _np.meshgrid(gx, gy)
+            # Smooth inverse-distance weighting onto 24x24 grid (zero NaN risk on convex hull corners)
+            dx2 = (gxx[..., None] - x_arr[None, None, :]) ** 2 + (gyy[..., None] - y_arr[None, None, :]) ** 2
+            wts = 1.0 / _np.maximum(dx2, 1e-12)
+            z_grid = _np.sum(wts * mag_arr[None, None, :], axis=-1) / _np.sum(wts, axis=-1)
+            mx = [round(float(v), 6) for v in gx]
+            my = [round(float(v), 6) for v in gy]
+            mz = [[round(float(v), 6) for v in row] for row in z_grid]
+
+    layers: List[LayerSpec] = []
+    z_axis: Optional[AxisSpec] = None
+    has_bg = mz is not None
+    if has_bg:
+        bg_scheme = str(cfg.get("color_scheme", "viridis" if compute_bg else "pseudocolor_zero_white"))
+        bg_stops = list(cfg["color_stops"]) if cfg.get("color_stops") else ot.get_scheme_color_stops(bg_scheme)
+        mat_s = SeriesSpec(
+            name=str(cfg.get("field_name", "Scalar_Background")),
+            matrix_x=mx,
+            matrix_y=my,
+            matrix_z=mz,
+            color=bg_stops[-1],
+            x_unit=cfg.get("x_unit"),
+            y_unit=cfg.get("y_unit"),
+            z_unit=cfg.get("z_unit"),
+        )
+        layers.append(
+            LayerSpec(
+                layer_id="field_bg_contour",
+                mark="contour_pseudocolor",
+                y_axis="y1",
+                series=[mat_s],
+                color_scheme=bg_scheme,
+                palette_colors=bg_stops,
+                z_levels_count=int(cfg.get("z_levels_count", 32)),
+                hide_contour_lines=bool(cfg.get("hide_contour_lines", True)),
+                origin_template="CONTOUR",
+                origin_plot_type=226,
+            )
+        )
+        z_axis = AxisSpec(
+            which="z",
+            label=str(cfg.get("z_label", "Velocity Magnitude")),
+            unit=cfg.get("z_unit"),
+            axis_kind="quantitative",
+        )
+
+    default_vec_col = "#FFFFFF" if (has_bg and str(cfg.get("color_scheme", "")) in ("viridis", "magma", "cividis")) else "#111111"
+    vec_col = ot.normalize_hex(str(v_src.get("color", cfg.get("vector_color", default_vec_col))))
+    base_lw = float(theme.get("curve_linewidth", 3.0))
+
+    quiver_s = SeriesSpec(
+        name=str(v_src.get("name", cfg.get("vector_name", "Vector Field"))),
+        x=[round(float(v), 6) for v in x_arr],
+        y=[round(float(v), 6) for v in y_arr],
+        color=vec_col,
+        line_style="solid",
+        line_width_pt=float(v_src.get("line_width_pt", cfg.get("vector_linewidth_pt", max(0.7, round(base_lw * 0.62, 2))))),
+        marker_style="none",
+        x_unit=cfg.get("x_unit"),
+        y_unit=cfg.get("y_unit"),
+        meta={
+            "u": [round(float(v), 6) for v in u_arr],
+            "v": [round(float(v), 6) for v in v_arr],
+            "x_end": [round(float(v), 6) for v in xe_arr],
+            "y_end": [round(float(v), 6) for v in ye_arr],
+            "magnitude": [round(float(v), 6) for v in mag_arr],
+            "arrow_scale": round(float(arrow_scale), 6),
+        },
+    )
+    layers.append(
+        LayerSpec(
+            layer_id="quiver_main",
+            mark="vector_quiver",
+            y_axis="y1",
+            series=[quiver_s],
+            color_scheme="paired_semantic",
+            palette_colors=[vec_col],
+            origin_template="VECTXYXY",
+            origin_plot_type=218,
+        )
+    )
+
+    all_bx = _np.concatenate([x_arr, xe_arr])
+    all_by = _np.concatenate([y_arr, ye_arr])
+    x_pad = 0.06 * max(float(_np.ptp(all_bx)), 1e-3)
+    y_pad = 0.06 * max(float(_np.ptp(all_by)), 1e-3)
+    x_lims = tuple(cfg["x_limits"]) if cfg.get("x_limits") is not None else (
+        float(_np.min(all_bx)) - x_pad,
+        float(_np.max(all_bx)) + x_pad,
+    )
+    y_lims = tuple(cfg["y_limits"]) if cfg.get("y_limits") is not None else (
+        float(_np.min(all_by)) - y_pad,
+        float(_np.max(all_by)) + y_pad,
+    )
+
+    locale = str(cfg.get("locale", "en"))
+    panel = PanelSpec(
+        panel_id="panel_main",
+        tag=str(cfg.get("tag", "a")),
+        x_axis=AxisSpec(which="x", label=str(cfg.get("x_label", "X")), unit=cfg.get("x_unit"), limits=x_lims),
+        y1_axis=AxisSpec(which="y1", label=str(cfg.get("y_label", "Y")), unit=cfg.get("y_unit"), limits=y_lims),
+        z_axis=z_axis,
+        layers=layers,
+        guides=_build_guides_from_cfg(cfg.get("guides", []), theme),
+        equal_aspect=bool(cfg.get("equal_aspect", True)),
+        box_linewidth_pt=float(theme.get("figure_box_linewidth", 3.0)),
+        legend_style="none",
+        meta={"has_scalar_bg": has_bg, "locale": locale},
+    )
+    fig_meta = dict(cfg.get("meta") or {})
+    fig_meta["locale"] = locale
+    return FigureSpec(
+        title=str(cfg.get("title", "Vector_Quiver_Field")),
+        mode="vector_quiver_field",
+        style_preset=str(cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET)),
+        journal_spec=cfg.get("journal_spec"),
+        theme=theme,
+        panels=[panel],
+        output_dir=cfg.get("output_dir"),
+        build_opju=bool(cfg.get("build_opju", True)),
+        summary_metrics={
+            "n_vectors": int(len(x_arr)),
+            "max_magnitude": round(float(_np.max(mag_arr)), 4),
+            "has_scalar_bg": has_bg,
+        },
+        meta=fig_meta,
+    )
+
+
+_COMPILE_MODE_ALIASES: Dict[str, str] = {
+    "fit_band": "xy_fit_and_band",
+    "bode": "bode_dual_panel",
+    "stat_dist": "stat_distribution",
+    "heatmap": "matrix_heatmap",
+    "bar_dot_sig": "stat_bar_dot_sig",
+    "violin": "stat_violin_raincloud",
+    "raincloud": "stat_violin_raincloud",
+    "volcano": "volcano_plot",
+    "forest": "forest_ablation_plot",
+    "ablation": "forest_ablation_plot",
+    "free_energy": "free_energy_diagram",
+    "ic50": "dose_response_4pl",
+    "4pl": "dose_response_4pl",
+    "km": "kaplan_meier_plot",
+    "kaplan_meier": "kaplan_meier_plot",
+    "survival": "kaplan_meier_plot",
+    "roc": "roc_pr_curve",
+    "pr_curve": "roc_pr_curve",
+    "nmr": "nmr_spectrum",
+    "broken_axis": "broken_axis_plot",
+    "dual_x": "dual_x_optical_spectrum",
+    "optical_dual_x": "dual_x_optical_spectrum",
+    "ternary": "ternary_diagram",
+    "polar": "polar_radar_plot",
+    "radar": "polar_radar_plot",
+    "multi_track": "multi_track_profile",
+    "stratigraphic_profile": "multi_track_profile",
+    "quiver": "vector_quiver_field",
+    "vector_field": "vector_quiver_field",
+}
+
+
 def compile_config_to_figure_spec(
     cfg: Dict[str, Any],
     loaded_tables: Optional[Dict[str, Any]] = None,
@@ -3017,41 +6319,112 @@ def compile_config_to_figure_spec(
     """
     if not isinstance(cfg, dict):
         raise TypeError(f"cfg must be a dict, got {type(cfg).__name__}")
-    mode = str(cfg.get("mode", "")).strip()
-    if not mode:
+    raw_mode = str(cfg.get("mode", "")).strip()
+    if not raw_mode:
         raise ValueError("Configuration dictionary is missing required `mode` field.")
+    mode = _COMPILE_MODE_ALIASES.get(raw_mode, raw_mode)
+    if raw_mode == "radar" and not cfg.get("subtype"):
+        cfg = copy.deepcopy(cfg)
+        cfg["subtype"] = "radar"
+    elif raw_mode == "pr_curve" and not cfg.get("curve_kind"):
+        cfg = copy.deepcopy(cfg)
+        cfg["curve_kind"] = "pr"
 
     style_name = cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET)
     theme = ot.load_theme(style_name)
+    j_spec = cfg.get("journal_spec")
+    if j_spec:
+        theme = ot.apply_journal_spec(theme, j_spec)
 
+    fig_spec: Optional[FigureSpec] = None
     if mode == "bar_grouped_gradient":
-        return _compile_bar_grouped_gradient(cfg, theme, loaded_tables)
-    if mode == "bar_stacked":
-        return _compile_bar_stacked(cfg, theme, loaded_tables, force_100pct=False)
-    if mode == "bar_stacked_100pct":
-        return _compile_bar_stacked(cfg, theme, loaded_tables, force_100pct=True)
-    if mode == "dual_y_combo":
-        return _compile_dual_y_combo(cfg, theme, loaded_tables)
-    if mode == "curve_with_inset":
-        return _compile_curve_with_inset(cfg, theme, loaded_tables)
-    if mode == "electrochem_kinetics":
-        return _compile_electrochem_kinetics(cfg, theme, loaded_tables)
-    if mode == "contour_pseudocolor_2d":
-        return _compile_contour_pseudocolor_2d(cfg, theme, loaded_tables)
-    if mode == "chart_grammar":
-        return _compile_universal_chart_grammar(cfg, theme, loaded_tables)
-    if mode == "xy_fit_and_band":
-        return _compile_xy_fit_and_band(cfg, theme, loaded_tables)
-    if mode == "bode_dual_panel":
-        return _compile_bode_dual_panel(cfg, theme, loaded_tables)
-    if mode == "stat_distribution":
-        return _compile_stat_distribution_new(cfg, theme, loaded_tables)
-    if mode == "matrix_heatmap":
-        return _compile_matrix_heatmap_new(cfg, theme, loaded_tables)
+        fig_spec = _compile_bar_grouped_gradient(cfg, theme, loaded_tables)
+    elif mode == "bar_stacked":
+        fig_spec = _compile_bar_stacked(cfg, theme, loaded_tables, force_100pct=False)
+    elif mode == "bar_stacked_100pct":
+        fig_spec = _compile_bar_stacked(cfg, theme, loaded_tables, force_100pct=True)
+    elif mode == "dual_y_combo":
+        fig_spec = _compile_dual_y_combo(cfg, theme, loaded_tables)
+    elif mode == "curve_with_inset":
+        fig_spec = _compile_curve_with_inset(cfg, theme, loaded_tables)
+    elif mode == "electrochem_kinetics":
+        fig_spec = _compile_electrochem_kinetics(cfg, theme, loaded_tables)
+    elif mode == "contour_pseudocolor_2d":
+        fig_spec = _compile_contour_pseudocolor_2d(cfg, theme, loaded_tables)
+    elif mode == "chart_grammar":
+        fig_spec = _compile_universal_chart_grammar(cfg, theme, loaded_tables)
+    elif mode == "xy_fit_and_band":
+        fig_spec = _compile_xy_fit_and_band(cfg, theme, loaded_tables)
+    elif mode == "bode_dual_panel":
+        fig_spec = _compile_bode_dual_panel(cfg, theme, loaded_tables)
+    elif mode == "stat_distribution":
+        fig_spec = _compile_stat_distribution_new(cfg, theme, loaded_tables)
+    elif mode == "matrix_heatmap":
+        fig_spec = _compile_matrix_heatmap_new(cfg, theme, loaded_tables)
+    elif mode == "stat_bar_dot_sig":
+        fig_spec = _compile_stat_bar_dot_sig(cfg, theme, loaded_tables)
+    elif mode == "stat_violin_raincloud":
+        fig_spec = _compile_stat_violin_raincloud(cfg, theme, loaded_tables)
+    elif mode == "volcano_plot":
+        fig_spec = _compile_volcano_plot(cfg, theme, loaded_tables)
+    elif mode == "forest_ablation_plot":
+        fig_spec = _compile_forest_ablation_plot(cfg, theme, loaded_tables)
+    elif mode == "free_energy_diagram":
+        fig_spec = _compile_free_energy_diagram(cfg, theme, loaded_tables)
+    elif mode == "dose_response_4pl":
+        fig_spec = _compile_dose_response_4pl(cfg, theme, loaded_tables)
+    elif mode == "kaplan_meier_plot":
+        fig_spec = _compile_kaplan_meier_plot(cfg, theme, loaded_tables)
+    elif mode == "roc_pr_curve":
+        fig_spec = _compile_roc_pr_curve(cfg, theme, loaded_tables)
+    elif mode == "nmr_spectrum":
+        fig_spec = _compile_nmr_spectrum(cfg, theme, loaded_tables)
+    elif mode == "broken_axis_plot":
+        fig_spec = _compile_broken_axis_plot(cfg, theme, loaded_tables)
+    elif mode == "dual_x_optical_spectrum":
+        fig_spec = _compile_dual_x_optical_spectrum(cfg, theme, loaded_tables)
+    elif mode == "ternary_diagram":
+        fig_spec = _compile_ternary_diagram(cfg, theme, loaded_tables)
+    elif mode == "polar_radar_plot":
+        fig_spec = _compile_polar_radar_plot(cfg, theme, loaded_tables)
+    elif mode == "multi_track_profile":
+        fig_spec = _compile_multi_track_profile(cfg, theme, loaded_tables)
+    elif mode == "vector_quiver_field":
+        fig_spec = _compile_vector_quiver_field(cfg, theme, loaded_tables)
 
-    raise ValueError(
-        f"Unsupported chart grammar mode {mode!r}; expected one of {SUPPORTED_GRAMMAR_MODES}"
-    )
+    if fig_spec is None:
+        raise ValueError(
+            f"Unsupported chart grammar mode {raw_mode!r}; expected one of {SUPPORTED_GRAMMAR_MODES}"
+        )
+
+    if j_spec:
+        fig_spec.journal_spec = str(theme.get("journal_spec") or j_spec)
+        fig_spec.theme = theme
+        if fig_spec.journal_spec != "presentation_4_3" and "width_mm" in theme and "height_mm" in theme:
+            if "width_mm" not in cfg and "height_mm" not in cfg:
+                fig_spec.width_mm = float(theme["width_mm"])
+                fig_spec.height_mm = float(theme["height_mm"])
+
+    # Allow top-level `x_breaks`, `y_breaks`, and `linked_top_x` across any single-panel mode
+    if fig_spec.panels:
+        p0 = fig_spec.panels[0]
+        if cfg.get("x_breaks") and not p0.x_axis.breaks:
+            p0.x_axis.breaks = _normalize_axis_breaks(cfg["x_breaks"])
+        if cfg.get("y_breaks") and not p0.y1_axis.breaks:
+            p0.y1_axis.breaks = _normalize_axis_breaks(cfg["y_breaks"])
+        if cfg.get("linked_top_x") and p0.x_axis.linked_top is None:
+            p0.x_axis.linked_top = _normalize_linked_top(cfg["linked_top_x"])
+        p0.validate()
+
+    if cfg.get("export_pdf") is not None:
+        fig_spec.meta["export_pdf"] = bool(cfg["export_pdf"])
+    if "locale" in cfg and "locale" not in fig_spec.meta:
+        fig_spec.meta["locale"] = str(cfg["locale"])
+    return fig_spec
+
+
+# Convenient public alias
+compile_figure_spec = compile_config_to_figure_spec
 
 
 _MODE_TEMPLATES: Dict[str, Dict[str, Any]] = {
@@ -3334,13 +6707,332 @@ _MODE_TEMPLATES: Dict[str, Dict[str, Any]] = {
             }
         ],
     },
+    "stat_bar_dot_sig": {
+        "mode": "stat_bar_dot_sig",
+        "style_preset": "style_publication_minimal",
+        "title": "Bio_Treatment_Bar_Dot_Significance",
+        "output_dir": "path/to/new_output_folder",
+        "y_label": "Relative Expression (a.u.)",
+        "error_bar": "SD",
+        "p_adjust": "fdr_bh",
+        "locale": "en",
+        "groups": {
+            "Control": [1.02, 0.96, 1.05, 0.99, 1.01, 0.98],
+            "Low Dose": [1.42, 1.35, 1.51, 1.48, 1.39, 1.44],
+            "High Dose": [2.15, 2.28, 2.04, 2.19, 2.31, 2.12],
+        },
+    },
+    "stat_violin_raincloud": {
+        "mode": "stat_violin_raincloud",
+        "style_preset": "style_arial_clean",
+        "title": "Cell_Cluster_Violin_OkabeIto",
+        "output_dir": "path/to/new_output_folder",
+        "y_label": "Fluorescence Intensity (a.u.)",
+        "color_scheme": "okabe_ito",
+        "show_stats": True,
+        "locale": "en",
+        "groups": {
+            "Cluster 1": [12.1, 13.4, 11.8, 12.9, 14.0, 12.5, 13.1, 11.9],
+            "Cluster 2": [18.5, 19.2, 17.6, 20.1, 18.9, 19.5, 18.0, 19.8],
+            "Cluster 3": [15.2, 14.8, 16.1, 15.6, 14.5, 15.9, 16.4, 15.0],
+        },
+    },
+    "volcano_plot": {
+        "mode": "volcano_plot",
+        "style_preset": "style_arial_clean",
+        "title": "Transcriptome_Volcano_Plot",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "log_2 Fold Change",
+        "y_label": "-log_10(FDR)",
+        "fc_cutoff": 1.0,
+        "p_cutoff": 0.01,
+        "top_n_labels": 6,
+        "locale": "en",
+        "genes": ["Gene A1", "Gene B2", "Gene C3", "Gene D4"],
+        "log2fc": [-2.4, -0.3, 0.4, 2.8],
+        "pval": [1.2e-6, 0.42, 0.18, 3.5e-8],
+    },
+    "forest_ablation_plot": {
+        "mode": "forest_ablation_plot",
+        "style_preset": "style_arial_clean",
+        "title": "Model_Ablation_Forest_CI",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "\\g(D)AUROC (95% CI)",
+        "null_value": 0.0,
+        "locale": "en",
+        "items": [
+            {"name": "Full Model", "estimate": 0.000, "ci_low": -0.008, "ci_high": 0.008},
+            {"name": "w/o Attention", "estimate": -0.042, "ci_low": -0.056, "ci_high": -0.028},
+            {"name": "w/o Pretrain", "estimate": -0.078, "ci_low": -0.095, "ci_high": -0.061},
+        ],
+    },
+    "free_energy_diagram": {
+        "mode": "free_energy_diagram",
+        "style_preset": "style_publication_minimal",
+        "title": "OER_Free_Energy_Profile",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "Reaction Coordinate",
+        "y_label": "Free Energy \\g(D)\\i(G) (eV)",
+        "step_labels": ["*", "*OH", "*O", "*OOH", "O_2"],
+        "locale": "en",
+        "pathways": [
+            {"name": "Catalyst 1", "role": "control", "steps": [0.00, 0.92, 2.38, 3.65, 4.92]},
+            {"name": "Catalyst 2", "role": "pulse", "steps": [0.00, 1.15, 2.52, 3.80, 4.92]},
+        ],
+    },
+    "dose_response_4pl": {
+        "mode": "dose_response_4pl",
+        "style_preset": "style_publication_minimal",
+        "title": "Inhibitor_Dose_Response_4PL",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "Concentration (nM)",
+        "y_label": "Cell Viability (%)",
+        "locale": "en",
+        "series": [
+            {
+                "name": "Compound 1",
+                "role": "pulse",
+                "x": [0.1, 1.0, 3.0, 10.0, 30.0, 100.0, 1000.0, 10000.0],
+                "y": [98.5, 95.2, 86.4, 64.1, 35.8, 14.2, 5.8, 4.9],
+            },
+            {
+                "name": "Compound 2",
+                "role": "control",
+                "x": [0.1, 1.0, 3.0, 10.0, 30.0, 100.0, 1000.0, 10000.0],
+                "y": [99.1, 98.4, 96.8, 93.1, 85.0, 68.5, 22.4, 7.6],
+            },
+        ],
+    },
+    "kaplan_meier_plot": {
+        "mode": "kaplan_meier_plot",
+        "style_preset": "style_arial_clean",
+        "title": "Clinical_Survival_Kaplan_Meier",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "Time (months)",
+        "y_label": "Survival Probability",
+        "show_ci": True,
+        "show_censor": True,
+        "show_risk_table": True,
+        "locale": "en",
+        "groups": [
+            {
+                "name": "Targeted Therapy",
+                "role": "pulse",
+                "time": [3.0, 6.0, 8.5, 11.0, 14.0, 17.5, 20.0, 22.0, 24.0, 24.0],
+                "event": [1, 0, 1, 0, 1, 0, 0, 1, 0, 0],
+            },
+            {
+                "name": "Standard Care",
+                "role": "control",
+                "time": [1.5, 3.5, 5.0, 6.5, 8.0, 9.5, 12.0, 15.0, 18.0, 24.0],
+                "event": [1, 1, 1, 0, 1, 1, 1, 1, 0, 1],
+            },
+        ],
+    },
+    "roc_pr_curve": {
+        "mode": "roc_pr_curve",
+        "curve_kind": "roc",
+        "style_preset": "style_arial_clean",
+        "title": "Classifier_ROC_Comparison",
+        "output_dir": "path/to/new_output_folder",
+        "show_optimal_point": True,
+        "locale": "en",
+        "models": [
+            {
+                "name": "Multimodal GNN",
+                "role": "pulse",
+                "y_true": [0, 0, 0, 0, 0, 1, 1, 1, 1, 1],
+                "y_score": [0.08, 0.15, 0.24, 0.38, 0.52, 0.48, 0.71, 0.84, 0.91, 0.96],
+            },
+            {
+                "name": "Linear Baseline",
+                "role": "control",
+                "y_true": [0, 0, 0, 0, 0, 1, 1, 1, 1, 1],
+                "y_score": [0.12, 0.29, 0.44, 0.61, 0.68, 0.35, 0.55, 0.64, 0.79, 0.88],
+            },
+        ],
+    },
+    "nmr_spectrum": {
+        "mode": "nmr_spectrum",
+        "style_preset": "style_publication_minimal",
+        "title": "Proton_NMR_400MHz_Spectrum",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "Chemical Shift \\g(d) (ppm)",
+        "y_label": "Intensity (a.u.)",
+        "locale": "en",
+        "series": [
+            {
+                "name": "1H NMR (400 MHz)",
+                "x": [8.0, 7.32, 7.26, 7.20, 4.20, 4.12, 4.04, 1.35, 1.26, 1.17, 0.5],
+                "y": [0.01, 0.32, 0.95, 0.31, 0.25, 0.68, 0.24, 0.38, 0.88, 0.36, 0.01],
+                "integrals": [
+                    {"ppm_range": [7.15, 7.38], "label": "2H"},
+                    {"ppm_range": [4.00, 4.25], "label": "2H"},
+                    {"ppm_range": [1.12, 1.40], "label": "3H"},
+                ],
+            }
+        ],
+        "peaks": [
+            {"ppm": 7.26, "label": "Ar-H (m)"},
+            {"ppm": 4.12, "label": "-OCH_2- (q)"},
+            {"ppm": 1.26, "label": "-CH_3 (t)"},
+        ],
+    },
+    "broken_axis_plot": {
+        "mode": "broken_axis_plot",
+        "style_preset": "style_publication_minimal",
+        "title": "Bimodal_Time_Regime_Broken_X",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "Reaction Time (s)",
+        "y_label": "Conversion (%)",
+        "x_limits": [0.0, 3600.0],
+        "x_breaks": [{"from": 12.0, "to": 1200.0, "position_pct": 48.0}],
+        "locale": "en",
+        "series": [
+            {
+                "name": "Catalyst A",
+                "role": "pulse",
+                "x": [0.5, 2.0, 5.0, 10.0, 1400.0, 2200.0, 3400.0],
+                "y": [12.0, 34.0, 58.0, 71.0, 86.0, 93.0, 97.5],
+            },
+            {
+                "name": "Control",
+                "role": "control",
+                "x": [0.5, 2.0, 5.0, 10.0, 1400.0, 2200.0, 3400.0],
+                "y": [4.0, 11.0, 21.0, 29.0, 48.0, 59.0, 66.0],
+            },
+        ],
+    },
+    "dual_x_optical_spectrum": {
+        "mode": "dual_x_optical_spectrum",
+        "style_preset": "style_publication_minimal",
+        "title": "UV_Vis_Dual_Wavelength_Energy",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "Wavelength \\g(l) (nm)",
+        "y_label": "Absorbance (a.u.)",
+        "linked_top_x": {"label": "Photon Energy (eV)", "formula": "1239.84193/x"},
+        "locale": "en",
+        "series": [
+            {
+                "name": "Perovskite Film",
+                "role": "pulse",
+                "x": [350.0, 420.0, 500.0, 600.0, 720.0, 780.0, 850.0],
+                "y": [1.85, 1.52, 1.18, 0.89, 0.64, 0.12, 0.03],
+            }
+        ],
+    },
+    "ternary_diagram": {
+        "mode": "ternary_diagram",
+        "style_preset": "style_publication_minimal",
+        "title": "Ternary_Composition_Phase_Map",
+        "output_dir": "path/to/new_output_folder",
+        "component_labels": ["Component A (wt%)", "Component B (wt%)", "Component C (wt%)"],
+        "locale": "en",
+        "series": [
+            {
+                "name": "Single Phase",
+                "role": "control",
+                "a": [70.0, 62.0, 55.0, 48.0],
+                "b": [15.0, 22.0, 25.0, 32.0],
+                "c": [15.0, 16.0, 20.0, 20.0],
+                "marker_style": "circle",
+            },
+            {
+                "name": "Two Phase",
+                "role": "pulse",
+                "a": [25.0, 20.0, 15.0],
+                "b": [45.0, 50.0, 55.0],
+                "c": [30.0, 30.0, 30.0],
+                "marker_style": "open_circle",
+            },
+        ],
+    },
+    "polar_radar_plot": {
+        "mode": "polar_radar_plot",
+        "subtype": "polar",
+        "style_preset": "style_publication_minimal",
+        "title": "Radiation_Anisotropy_Polar_Pattern",
+        "output_dir": "path/to/new_output_folder",
+        "y_label": "Normalized Gain",
+        "locale": "en",
+        "series": [
+            {
+                "name": "TE Mode",
+                "role": "pulse",
+                "theta": [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0, 360.0],
+                "r": [0.95, 0.68, 0.22, 0.65, 0.94, 0.66, 0.21, 0.69, 0.95],
+            }
+        ],
+    },
+    "polar_radar_plot:radar": {
+        "mode": "polar_radar_plot",
+        "subtype": "radar",
+        "style_preset": "style_arial_clean",
+        "title": "Benchmark_Multi_Metric_Radar",
+        "output_dir": "path/to/new_output_folder",
+        "categories": ["Accuracy", "Speed", "Memory", "Robustness", "Calibration", "Transfer"],
+        "locale": "en",
+        "series": [
+            {"name": "Proposed Model", "role": "pulse", "y": [0.94, 0.86, 0.82, 0.91, 0.89, 0.88]},
+            {"name": "Baseline Model", "role": "control", "y": [0.81, 0.78, 0.74, 0.72, 0.76, 0.69]},
+        ],
+    },
+    "multi_track_profile": {
+        "mode": "multi_track_profile",
+        "style_preset": "style_arial_clean",
+        "title": "Water_Column_Multi_Track_Profile",
+        "output_dir": "path/to/new_output_folder",
+        "depth_label": "Depth (m)",
+        "depth_invert": True,
+        "locale": "en",
+        "horizons": [{"depth_start": 25.0, "depth_end": 42.0, "label": "Thermocline"}],
+        "tracks": [
+            {
+                "name": "Temperature",
+                "x_label": "Temp. (degC)",
+                "color": "#D84B5C",
+                "x": [24.2, 23.8, 19.5, 14.2, 10.8, 8.9],
+                "depth": [0.0, 15.0, 30.0, 45.0, 75.0, 100.0],
+            },
+            {
+                "name": "Salinity",
+                "x_label": "Salinity (PSU)",
+                "color": "#2B6CB0",
+                "x": [34.1, 34.2, 34.6, 34.9, 35.1, 35.2],
+                "depth": [0.0, 15.0, 30.0, 45.0, 75.0, 100.0],
+            },
+            {
+                "name": "Dissolved O2",
+                "x_label": "DO (mg L^-1)",
+                "color": "#009E73",
+                "x": [7.8, 7.6, 6.1, 4.8, 4.2, 3.9],
+                "depth": [0.0, 15.0, 30.0, 45.0, 75.0, 100.0],
+            },
+        ],
+    },
+    "vector_quiver_field": {
+        "mode": "vector_quiver_field",
+        "style_preset": "style_publication_minimal",
+        "title": "Vortex_Velocity_Quiver_Map",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "x (mm)",
+        "y_label": "y (mm)",
+        "z_label": "|V| (m s^-1)",
+        "color_scheme": "viridis",
+        "compute_magnitude_bg": True,
+        "locale": "en",
+        "x": [-1.0, 0.0, 1.0, -1.0, 0.0, 1.0, -1.0, 0.0, 1.0],
+        "y": [-1.0, -1.0, -1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        "u": [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, -1.0, -1.0, -1.0],
+        "v": [-1.0, 0.0, 1.0, -1.0, 0.0, 1.0, -1.0, 0.0, 1.0],
+    },
 }
 
 
 def generate_mode_template(mode: str) -> Dict[str, Any]:
     """
     Return a standard JSON-ready configuration template dictionary for `init-template`
-    across all first-batch Chart Grammar modes (and `electrochem_kinetics` subtypes).
+    across all Chart Grammar modes (including cross-science modes and kinetics subtypes).
     """
     key = str(mode or "").strip()
     subtype_aliases = {
@@ -3348,11 +7040,36 @@ def generate_mode_template(mode: str) -> Dict[str, Any]:
         "electrochem_kinetics:pulse_align": "electrochem_kinetics",
         "galvanostatic_dqdv": "electrochem_kinetics:galvanostatic_dqdv",
         "ragone": "electrochem_kinetics:ragone",
-        # New mode aliases
+        # Mode aliases
         "fit_band": "xy_fit_and_band",
         "bode": "bode_dual_panel",
         "stat_dist": "stat_distribution",
         "heatmap": "matrix_heatmap",
+        "bar_dot_sig": "stat_bar_dot_sig",
+        "violin": "stat_violin_raincloud",
+        "raincloud": "stat_violin_raincloud",
+        "volcano": "volcano_plot",
+        "forest": "forest_ablation_plot",
+        "ablation": "forest_ablation_plot",
+        "free_energy": "free_energy_diagram",
+        "ic50": "dose_response_4pl",
+        "4pl": "dose_response_4pl",
+        "km": "kaplan_meier_plot",
+        "kaplan_meier": "kaplan_meier_plot",
+        "survival": "kaplan_meier_plot",
+        "roc": "roc_pr_curve",
+        "pr_curve": "roc_pr_curve",
+        "nmr": "nmr_spectrum",
+        "broken_axis": "broken_axis_plot",
+        "dual_x": "dual_x_optical_spectrum",
+        "optical_dual_x": "dual_x_optical_spectrum",
+        "ternary": "ternary_diagram",
+        "polar": "polar_radar_plot",
+        "radar": "polar_radar_plot:radar",
+        "multi_track": "multi_track_profile",
+        "stratigraphic_profile": "multi_track_profile",
+        "quiver": "vector_quiver_field",
+        "vector_field": "vector_quiver_field",
     }
     lookup = subtype_aliases.get(key, key)
     if lookup not in _MODE_TEMPLATES:

@@ -25,9 +25,61 @@ import chart_grammar as cg
 import origin_builder as ob
 import origin_theme as ot
 
-# Re-export public Origin export & bar gradient helpers
-export_origin_publication_figures = ob.export_origin_publication_figures
+# Re-export bar gradient helper & wrap publication export with vector PDF support
 apply_origin_bar_gradient_and_label = ob.apply_origin_bar_gradient_and_label
+
+
+def export_origin_publication_figures(
+    op: Any,
+    gp: Any,
+    out_dir: str | Path,
+    stem: str,
+    width_in: float = 0.0,
+    make_qa_preview: bool = True,
+    export_pdf: bool = False,
+) -> Dict[str, str]:
+    """
+    Export 600 DPI lossless LZW `.tif`, 300 DPI `.png`, `<=960 px` `_qa_previews/*_preview.jpg`,
+    and optional native vector `.pdf` (`export_pdf=True`) via OriginPro `expGraph` (`tr.Margin:=2`).
+    """
+    res = ob.export_origin_publication_figures(
+        op,
+        gp,
+        out_dir,
+        stem,
+        width_in=width_in,
+        make_qa_preview=make_qa_preview,
+    )
+    if export_pdf:
+        out_p = Path(out_dir).resolve()
+        out_p.mkdir(parents=True, exist_ok=True)
+        tgt_wh = ob._PAGE_TARGET_INCHES.get(gp.name)
+        if tgt_wh is not None:
+            gp.obj.Units = 0
+            gp.obj.Width = float(tgt_wh[0])
+            gp.obj.Height = float(tgt_wh[1])
+        op.lt_exec(f'win -a "{gp.name}";')
+        size_clause = f"tr1.Unit:=0 tr1.Width:={float(width_in)} " if (width_in and float(width_in) > 0.0) else ""
+        pdf_p = out_p / f"{stem}.pdf"
+        op.po.LT_set_str("__LASTEXP", "")
+        op.lt_exec(
+            f'expGraph type:=pdf filename:="{stem}" path:="{out_p}" overwrite:=replace '
+            f"tr.Margin:=2 {size_clause}-sw;"
+        )
+        pdf_str = op.po.LT_get_str("__LASTEXP") or str(pdf_p)
+        pdf_cand = Path(pdf_str)
+        if not pdf_cand.exists() or pdf_cand.stat().st_size == 0:
+            op.lt_exec(
+                f'expGraph type:=pdf filename:="{pdf_p.name}" path:="{out_p}" overwrite:=1 tr.margin:=2;'
+            )
+            pdf_cand = pdf_p
+        if not pdf_cand.exists() or pdf_cand.stat().st_size == 0:
+            if pdf_p.exists() and pdf_p.stat().st_size > 0:
+                pdf_cand = pdf_p
+            else:
+                raise RuntimeError(f"Origin expGraph failed to export vector PDF for '{gp.name}' -> {pdf_p}")
+        res["pdf"] = str(pdf_cand.resolve())
+    return res
 
 
 def _sanitize_file_stem(name: str, default: str = "SciOrigin_Figure") -> str:
@@ -61,6 +113,10 @@ def _format_origin_guide_text(raw_text: str) -> str:
     s = s.replace("\\tau", "\\g(t)").replace("τ", "\\g(t)")
     s = s.replace("\\gamma", "\\g(g)").replace("γ", "\\g(g)")
     s = s.replace("\\theta", "\\g(q)").replace("θ", "\\g(q)")
+    s = s.replace("\\delta", "\\g(d)").replace("δ", "\\g(d)")
+    s = s.replace("\\lambda", "\\g(l)").replace("λ", "\\g(l)")
+    s = s.replace("\\mu", "\\g(m)").replace("μ", "\\g(m)")
+    s = s.replace("\\ddagger", "‡").replace("\\ddag", "‡")
     s = re.sub(r"\bOhm\b", lambda _: "\\g(W)", s)
     s = s.replace("pulse_end", "pulse,end")
 
@@ -249,6 +305,8 @@ def _infer_panel_xy_bounds(
     xs: List[float] = []
     ys: List[float] = []
     has_100_stack = False
+    has_forest_ci = False
+    forest_has_text = False
 
     for ly in panel.layers:
         if ly.y_axis != y_axis_filter:
@@ -267,13 +325,92 @@ def _infer_panel_xy_bounds(
                 ys.extend([0.0] + totals)
                 xs.extend([0.4, float(n_pts) + 0.6])
             continue
-        if ly.mark in ("stat_distribution", "stat_box_jitter"):
+        if ly.mark in ("stat_distribution", "stat_box_jitter", "violin_box"):
             n_g = len(ly.series)
             if n_g > 0:
                 xs.extend([0.4, float(n_g) + 0.6])
             for s in ly.series:
                 if s.y:
+                    v_arr = [float(v) for v in s.y if v is not None and math.isfinite(float(v))]
+                    if v_arr:
+                        ys.extend(v_arr)
+                        if ly.mark == "violin_box" and len(v_arr) >= 2:
+                            sd_v = float(np.std(v_arr, ddof=1))
+                            ys.extend([min(v_arr) - 0.35 * sd_v, max(v_arr) + 0.35 * sd_v])
+            continue
+        if ly.mark == "bar_dot_error":
+            n_g = len(ly.categories) if ly.categories else len(ly.series)
+            if n_g > 0:
+                xs.extend([0.4, float(n_g) + 0.6])
+            ys.append(0.0)
+            for s in ly.series:
+                if s.y:
                     ys.extend([float(v) for v in s.y])
+                    if s.y_err:
+                        ys.extend([float(yv) + float(ev) for yv, ev in zip(s.y, s.y_err)])
+                        ys.extend([float(yv) - float(ev) for yv, ev in zip(s.y, s.y_err)])
+                raw_pts = s.meta.get("raw_points")
+                if isinstance(raw_pts, (list, tuple)):
+                    for rp in raw_pts:
+                        if isinstance(rp, (int, float)):
+                            ys.append(float(rp))
+                        elif isinstance(rp, (list, tuple)):
+                            ys.extend([float(vv) for vv in rp if isinstance(vv, (int, float))])
+            continue
+        if ly.mark == "forest_ci":
+            has_forest_ci = True
+            for s in ly.series:
+                if ly.show_value_labels or s.show_value_labels:
+                    forest_has_text = True
+                if s.x:
+                    xs.extend([float(xv) for xv in s.x if isinstance(xv, (int, float))])
+                for ci_k in ("ci_low", "ci_high"):
+                    ci_seq = s.meta.get(ci_k)
+                    if isinstance(ci_seq, (list, tuple)):
+                        xs.extend([float(cv) for cv in ci_seq if isinstance(cv, (int, float))])
+                k_items = len(s.y or s.x or ly.categories or [])
+                if k_items > 0:
+                    ys.extend([0.4, float(k_items) + 0.6])
+            for g in panel.guides:
+                if g.kind == "vline" and g.value is not None:
+                    xs.append(float(g.value))
+            continue
+        if ly.mark == "energy_step":
+            n_m = len(ly.categories) if ly.categories else max((len(s.y or []) for s in ly.series), default=2)
+            hw_e = float(ly.style_overrides.get("plateau_half_width", 0.28))
+            xs.extend([1.0 - hw_e - 0.25, float(n_m) + hw_e + 0.25])
+            for s in ly.series:
+                if s.y:
+                    ys.extend([float(v) for v in s.y])
+                for seg_key in ("connector_segments", "ts_segments"):
+                    for _sx_p, sy_p in (s.meta.get(seg_key) or []):
+                        ys.extend([float(vv) for vv in sy_p if isinstance(vv, (int, float))])
+            continue
+        if ly.mark == "km_step":
+            for s in ly.series:
+                if s.x:
+                    xs.extend([float(xv) for xv in s.x if isinstance(xv, (int, float))])
+                if s.y:
+                    ys.extend([float(yv) for yv in s.y if isinstance(yv, (int, float))])
+                if s.y_low:
+                    ys.extend([float(yv) for yv in s.y_low if isinstance(yv, (int, float))])
+                if s.y_high:
+                    ys.extend([float(yv) for yv in s.y_high if isinstance(yv, (int, float))])
+            ar_tbl = panel.meta.get("at_risk_table")
+            if isinstance(ar_tbl, dict) and ar_tbl.get("times"):
+                xs.extend([float(tv) for tv in ar_tbl["times"] if isinstance(tv, (int, float))])
+            continue
+        if ly.mark == "vector_quiver":
+            for s in ly.series:
+                xv_q = [float(v) for v in (s.x or []) if isinstance(v, (int, float))]
+                yv_q = [float(v) for v in (s.y or []) if isinstance(v, (int, float))]
+                xs.extend(xv_q)
+                ys.extend(yv_q)
+                xe_q = s.meta.get("x_end")
+                ye_q = s.meta.get("y_end")
+                if isinstance(xe_q, (list, tuple)) and isinstance(ye_q, (list, tuple)):
+                    xs.extend([float(v) for v in xe_q if isinstance(v, (int, float))])
+                    ys.extend([float(v) for v in ye_q if isinstance(v, (int, float))])
             continue
         if ly.mark in ("contour_pseudocolor", "matrix_heatmap") and ly.series:
             s0 = ly.series[0]
@@ -312,12 +449,51 @@ def _infer_panel_xy_bounds(
             elif ly.categories:
                 xs.extend([0.4, float(len(ly.categories)) + 0.6])
 
+    # Include slope_triangle guide vertices in xs/ys so reference triangles never clip
+    for g in panel.guides:
+        if g.kind == "slope_triangle" and g.axis == y_axis_filter and g.x is not None and g.y is not None:
+            gx1 = float(g.x)
+            gx2 = float(g.x2 if g.x2 is not None else (g.x_end if g.x_end is not None else gx1))
+            gy1 = float(g.y)
+            xs.extend([gx1, gx2])
+            ys.append(gy1)
+            if g.y_end is not None:
+                ys.append(float(g.y_end))
+            elif g.value is not None:
+                m_sl = float(g.value)
+                is_lx = panel.x_axis.scale == "log10"
+                is_ly = (panel.y2_axis.scale == "log10") if (y_axis_filter == "y2" and panel.y2_axis) else (panel.y1_axis.scale == "log10")
+                try:
+                    if is_lx and is_ly and gx1 > 0 and gx2 > 0 and gy1 > 0:
+                        ys.append(gy1 * ((gx2 / gx1) ** m_sl))
+                    elif (not is_lx) and is_ly and gy1 > 0:
+                        ys.append(10.0 ** (math.log10(gy1) + m_sl * (gx2 - gx1)))
+                    elif is_lx and (not is_ly) and gx1 > 0 and gx2 > 0:
+                        ys.append(gy1 + m_sl * (math.log10(gx2) - math.log10(gx1)))
+                    else:
+                        ys.append(gy1 + m_sl * (gx2 - gx1))
+                except Exception:
+                    pass
+
+    # Include significance bracket heights + >=12% headroom guard in ys
+    sig_bracket_ys = [
+        float(g.value)
+        for g in panel.guides
+        if g.kind == "sig_bracket" and g.axis == y_axis_filter and g.value is not None
+    ]
+    if sig_bracket_ys:
+        max_sig_y = max(sig_bracket_ys)
+        min_base_y = min(ys) if ys else 0.0
+        base_span = max(max_sig_y - min(0.0, min_base_y), (max(ys) - min_base_y) if ys else 1.0, 1e-6)
+        ys.append(max_sig_y + 0.14 * base_span)
+
     has_2d_mat = any(ly.mark in ("contour_pseudocolor", "matrix_heatmap") for ly in panel.layers)
-    has_stat_any = any(ly.mark in ("stat_distribution", "stat_box_jitter") for ly in panel.layers)
+    has_stat_any = any(ly.mark in ("stat_distribution", "stat_box_jitter", "violin_box") for ly in panel.layers)
     if (
         panel.equal_aspect
         and not has_2d_mat
         and not has_stat_any
+        and not has_forest_ci
         and y_axis_filter == "y1"
         and panel.x_axis.scale != "log10"
         and panel.y1_axis.scale != "log10"
@@ -338,27 +514,51 @@ def _infer_panel_xy_bounds(
         if panel.x_axis.scale == "log10":
             pos_xs = [v for v in xs if v > 0]
             if pos_xs:
-                lx0 = 10.0 ** math.floor(math.log10(min(pos_xs)) + 1e-9)
-                lx1 = 10.0 ** math.ceil(math.log10(max(pos_xs)) - 1e-9)
-                if min(pos_xs) <= 1.12 * lx0:
-                    lx0 /= 10.0
-                if max(pos_xs) >= 0.88 * lx1:
-                    lx1 *= 10.0
-                x_bounds = (lx0, max(lx0 * 10.0, lx1))
+                min_px, max_px = min(pos_xs), max(pos_xs)
+                lx0 = 10.0 ** math.floor(math.log10(min_px) + 1e-9)
+                lx1 = 10.0 ** math.ceil(math.log10(max_px) - 1e-9)
+                n_dec = round(math.log10(max(lx1 / max(lx0, 1e-30), 10.0)))
+                if n_dec >= 4:
+                    lo_use = lx0 * 0.55 if min_px <= 1.15 * lx0 else lx0
+                    hi_use = lx1 * 1.85 if max_px >= 0.85 * lx1 else lx1
+                    x_bounds = (lo_use, max(lo_use * 10.0, hi_use))
+                else:
+                    if min_px <= 1.12 * lx0:
+                        lx0 /= 10.0
+                    if max_px >= 0.88 * lx1:
+                        lx1 *= 10.0
+                    x_bounds = (lx0, max(lx0 * 10.0, lx1))
             else:
                 x_bounds = (0.1, 10.0)
+        elif has_forest_ci:
+            max_ci_len = 18
+            for ly_f in panel.layers:
+                if ly_f.mark == "forest_ci" and ly_f.series:
+                    fc_l = ly_f.series[0].meta.get("formatted_ci") or []
+                    if fc_l:
+                        max_ci_len = max((len(str(t)) for t in fc_l), default=18)
+            r_pad_frac = max(1.26, min(1.62, 0.074 * max_ci_len)) if forest_has_text else 0.10
+            x_bounds = (x_lo - 0.10 * x_sp, x_hi + r_pad_frac * x_sp)
         elif not has_2d_mat and not panel.equal_aspect:
             x_pad_lo = 0.0 if (x_lo == 0.0 and x_hi > 0.0) else 0.05 * x_sp
-            x_bounds = (x_lo - x_pad_lo, x_hi + 0.05 * x_sp)
+            x_lo_cand = x_lo - x_pad_lo
+            linked_top_cfg = getattr(panel.x_axis, "linked_top", None)
+            if isinstance(linked_top_cfg, dict) and "/" in str(linked_top_cfg.get("formula", "")) and x_lo > 0.0:
+                x_lo_cand = max(x_lo * 0.94, x_lo_cand, 1e-6)
+            x_bounds = (x_lo_cand, x_hi + 0.05 * x_sp)
         else:
             x_bounds = (x_lo, x_hi)
     else:
         x_bounds = (0.0, 1.0)
 
     target_ax = panel.y2_axis if (y_axis_filter == "y2" and panel.y2_axis is not None) else panel.y1_axis
-    has_stat_y = any(ly.mark in ("stat_distribution", "stat_box_jitter") for ly in panel.layers if ly.y_axis == y_axis_filter)
+    has_stat_y = any(ly.mark in ("stat_distribution", "stat_box_jitter", "violin_box") for ly in panel.layers if ly.y_axis == y_axis_filter)
+    has_km_y = any(ly.mark == "km_step" for ly in panel.layers if ly.y_axis == y_axis_filter)
     if target_ax.limits is not None and not reserve_top_legend_space:
         y_bounds = (float(min(target_ax.limits)), float(max(target_ax.limits)))
+    elif has_km_y:
+        y_top_km = 105.0 if (ys and max(ys) > 1.5) else 1.05
+        y_bounds = (0.0, y_top_km)
     elif has_100_stack:
         y_bounds = (0.0, 136.0 if reserve_top_legend_space else 100.0)
     elif ys:
@@ -375,25 +575,33 @@ def _infer_panel_xy_bounds(
             else:
                 y_bounds = (0.1, 10.0)
         elif has_stat_y:
-            y_bounds = (y_lo - 0.14 * span, y_hi + (0.36 if reserve_top_legend_space else 0.22) * span)
+            y_bounds = (y_lo - 0.10 * span, y_hi + (0.28 if reserve_top_legend_space else 0.14) * span)
         elif reserve_top_legend_space and (y_lo >= 0.0 or panel.align_zero):
-            y_bounds = (0.0, y_hi * 1.38)
+            y_bounds = (0.0, y_hi * 1.32)
         elif y_lo >= 0.0 and any("bar" in ly.mark for ly in panel.layers if ly.y_axis == y_axis_filter):
             has_lbl = any(
                 (ly.show_value_labels or any(s.show_value_labels for s in ly.series))
                 for ly in panel.layers
                 if ly.y_axis == y_axis_filter
             )
-            pad = 1.30 if has_lbl else 1.18
+            pad = 1.30 if has_lbl else (1.08 if sig_bracket_ys else 1.18)
             y_bounds = (0.0, y_hi * pad)
         elif panel.align_zero and y_lo >= 0.0:
             raw_top = y_hi * 1.22
             step_snap = 10.0 if raw_top >= 25.0 else (5.0 if raw_top >= 10.0 else 1.0)
             y_bounds = (0.0, math.ceil(raw_top / step_snap) * step_snap)
         else:
-            y_bounds = (y_lo - 0.07 * span, y_hi + (0.36 if reserve_top_legend_space else 0.22) * span)
+            y_bounds = (y_lo - 0.07 * span, y_hi + (0.32 if reserve_top_legend_space else 0.18) * span)
     else:
         y_bounds = (0.0, 1.0)
+
+    # Hard post-guard: ensure highest sig_bracket + star always has >=15% headroom (or >=26% with interior top legend)
+    if sig_bracket_ys and target_ax.limits is None and target_ax.scale != "log10":
+        max_sig_y = max(sig_bracket_ys)
+        cur_span = max(max_sig_y - y_bounds[0], y_bounds[1] - y_bounds[0], 1e-6)
+        req_top = max_sig_y + (0.26 if reserve_top_legend_space else 0.15) * cur_span
+        if y_bounds[1] < req_top:
+            y_bounds = (y_bounds[0], req_top)
 
     return x_bounds, y_bounds
 
@@ -405,6 +613,8 @@ def _resolve_clean_origin_template(panel_layers: Sequence[cg.LayerSpec]) -> Opti
             if ly.mark == "bar_stacked_100pct" and (ly.show_value_labels or ly.show_ribbon_links):
                 return "StackColP"
             return "STACKCOLUMN"
+        if ly.mark == "violin_box":
+            return "ViolinBox"
         if ly.mark in ("stat_distribution", "stat_box_jitter"):
             return None
         if ly.origin_template:
@@ -419,25 +629,22 @@ def _pick_cleanest_legend_corner(
 ) -> str:
     """Choose the interior corner (`corner_upper_left/right` or `corner_lower_left/right`) with lowest data/inset/guide occupancy."""
     style = (panel.legend_style or "").strip().lower()
+    explicit_corner: Optional[str] = None
     if "lower_left" in style or "bottom_left" in style:
-        return "corner_lower_left"
-    if "lower_right" in style or "bottom_right" in style:
-        return "corner_lower_right"
-    if "right" in style:
-        return "corner_upper_right"
-    if "upper_left" in style or "top_left" in style:
-        return "corner_upper_left"
-
-    if panel.equal_aspect:
-        # Still score-based for equal_aspect (EIS Nyquist): high-frequency data clusters lower-right,
-        # so remove the hard-coded early-exit and let data density scoring decide.
-        pass
+        explicit_corner = "corner_lower_left"
+    elif "lower_right" in style or "bottom_right" in style:
+        explicit_corner = "corner_lower_right"
+    elif "right" in style:
+        explicit_corner = "corner_upper_right"
+    elif "upper_left" in style or "top_left" in style:
+        explicit_corner = "corner_upper_left"
 
     x_lo, x_hi = min(x_bounds), max(x_bounds)
     y_lo, y_hi = min(y_bounds), max(y_bounds)
-    x_sp = max(x_hi - x_lo, 1e-30)
-    y_sp = max(y_hi - y_lo, 1e-30)
     inv_x = bool(panel.x_axis.invert)
+    inv_y = bool(panel.y1_axis.invert)
+    is_log_x = panel.x_axis.scale == "log10"
+    is_log_y = panel.y1_axis.scale == "log10"
 
     # Corners as (fx_min, fx_max, fy_min_from_bottom, fy_max_from_bottom)
     boxes = {
@@ -469,20 +676,28 @@ def _pick_cleanest_legend_corner(
             for xv, yv in zip(s.x[::step], s.y[::step]):
                 if not isinstance(xv, (int, float)) or not isinstance(yv, (int, float)):
                     continue
-                fx = (x_hi - float(xv)) / x_sp if inv_x else (float(xv) - x_lo) / x_sp
-                fy = (float(yv) - y_lo) / y_sp
+                fx = ob._map_data_to_frac(float(xv), x_lo, x_hi, inv_x, is_log_x)
+                fy_raw = ob._map_data_to_frac(float(yv), y_lo, y_hi, False, is_log_y)
+                fy = (1.0 - fy_raw) if inv_y else fy_raw
                 for cname, (bx0, bx1, by0, by1) in boxes.items():
                     if bx0 <= fx <= bx1 and by0 <= fy <= by1:
                         scores[cname] += 1.0
 
     for g in panel.guides:
         if g.kind == "hline" and g.value is not None:
-            fy = (float(g.value) - y_lo) / y_sp
+            fy_raw = ob._map_data_to_frac(float(g.value), y_lo, y_hi, False, is_log_y)
+            fy = (1.0 - fy_raw) if inv_y else fy_raw
             for cname, (_bx0, _bx1, by0, by1) in boxes.items():
                 if by0 <= fy <= by1:
                     scores[cname] += 6.0 if "right" in cname else 2.0
 
-    return min(scores.keys(), key=lambda k: scores[k])
+    best_corner = min(scores.keys(), key=lambda k: scores[k])
+    if explicit_corner is not None:
+        # Honor explicit corner unless it is heavily collided (>= 5 hits) while another corner is nearly empty (< 1.0)
+        if scores[explicit_corner] >= 5.0 and scores[best_corner] < 1.0:
+            return best_corner
+        return explicit_corner
+    return best_corner
 
 
 def _plot_layer_into_glayer(
@@ -893,7 +1108,523 @@ def _plot_layer_into_glayer(
         gl.lt_exec("label -r Legend;")
         return leg_entries
 
-    # 4. Line / Scatter / Shaded Band / Waterfall (`line_scatter`, `waterfall`, `deconv_envelope`)
+    # 3b. Bar + Individual Replicate Dots + Error Bars (`bar_dot_error`)
+    if layer.mark == "bar_dot_error":
+        grp_records: List[Dict[str, Any]] = []
+        if len(layer.series) == 1 and len(layer.series[0].y or []) > 1:
+            s0 = layer.series[0]
+            y_vs = list(s0.y or [])
+            N_b = len(y_vs)
+            cats_b = list(layer.categories or [str(v) for v in (s0.x or [f"G{i+1}" for i in range(N_b)])])
+            errs_b = list(s0.y_err) if s0.y_err is not None else [0.0] * N_b
+            raw_seq = s0.meta.get("raw_points") or []
+            pal_b = layer.palette_colors or ot.resolve_series_colors(N_b, scheme=layer.color_scheme)
+            for i in range(N_b):
+                rp_i = raw_seq[i] if (i < len(raw_seq) and isinstance(raw_seq[i], (list, tuple))) else []
+                grp_records.append(
+                    {
+                        "name": str(cats_b[i]),
+                        "mean": float(y_vs[i]),
+                        "err": float(errs_b[i]) if i < len(errs_b) else 0.0,
+                        "color": ot.normalize_hex(pal_b[i % len(pal_b)]),
+                        "raw_points": [float(v) for v in rp_i if isinstance(v, (int, float))],
+                        "y_unit": s0.y_unit,
+                        "value_format": s0.value_format,
+                    }
+                )
+        else:
+            N_b = len(layer.series)
+            pal_b = layer.palette_colors or ot.resolve_series_colors(max(1, N_b), scheme=layer.color_scheme)
+            for i, s in enumerate(layer.series):
+                yv0 = float(s.y[0]) if s.y else 0.0
+                ev0 = float(s.y_err[0]) if s.y_err else 0.0
+                rp_i = s.meta.get("raw_points") or []
+                grp_records.append(
+                    {
+                        "name": str(s.name or (layer.categories[i] if layer.categories and i < len(layer.categories) else f"G{i+1}")),
+                        "mean": yv0,
+                        "err": ev0,
+                        "color": ot.normalize_hex(s.color or pal_b[i % len(pal_b)]),
+                        "raw_points": [float(v) for v in rp_i if isinstance(v, (int, float))],
+                        "y_unit": s.y_unit,
+                        "value_format": s.value_format,
+                    }
+                )
+
+        N_g = len(grp_records)
+        cats_bd = [g["name"] for g in grp_records]
+        diag_bd: Dict[str, Any] = {"Category": cats_bd}
+        for i, gr in enumerate(grp_records):
+            diag_bd[f"Bar_{i+1}"] = [gr["mean"] if r == i else np.nan for r in range(N_g)]
+            diag_bd[f"Err_{i+1}"] = [gr["err"] if r == i else np.nan for r in range(N_g)]
+        wks.from_df(pd.DataFrame(diag_bd))
+        wks.set_label(0, panel.x_axis.label or "Group", "L")
+        for i, gr in enumerate(grp_records):
+            wks.set_label(1 + 2 * i, gr["name"], "L")
+            if gr["y_unit"]:
+                wks.set_label(1 + 2 * i, str(gr["y_unit"]), "U")
+        wks.cols_axis("X" + "YE" * N_g)
+
+        has_any_dots = any(bool(gr["raw_points"]) for gr in grp_records)
+        has_sig_brk = any(g.kind == "sig_bracket" for g in panel.guides)
+        # Never show bar-top numeric labels when replicate dots or significance brackets are overlaid!
+        allow_bar_lbl = bool(layer.show_value_labels) and not has_any_dots and not has_sig_brk
+        opt_gap_bd = 50 if N_g <= 2 else (38 if N_g == 3 else (28 if N_g == 4 else 24))
+        err_ink = ot.hex_to_origin_rgb_int("#222222")
+
+        for i, gr in enumerate(grp_records):
+            has_err_i = abs(gr["err"]) > 0.0
+            before_cnt = len(gl.plot_list())
+            p_bar = gl.add_plot(
+                wks,
+                coly=1 + 2 * i,
+                colx=0,
+                colyerr=(2 + 2 * i if has_err_i else -1),
+                type="c",
+            )
+            after_cnt = len(gl.plot_list())
+            bar_p_idx = before_cnt + 1
+            if after_cnt >= before_cnt + 2:
+                gl.lt_exec(f"range re = !{after_cnt}; set re -w {sub_w_u}; set re -c {err_ink};")
+
+            pb = ot.compute_pastel_fill_and_border(gr["color"])
+            c_fill = ot.hex_to_origin_rgb_int(pb["fill_hex"])
+            c_bdr = ot.hex_to_origin_rgb_int(pb["border_hex"])
+            c_lbl = ot.hex_to_origin_rgb_int(pb["label_hex"]) if allow_bar_lbl else None
+            apply_origin_bar_gradient_and_label(
+                p_bar,
+                c_fill,
+                None,
+                shading_mode=0,
+                gap=opt_gap_bd,
+                border_color=c_bdr,
+                border_width=bdr_lw,
+                label_color=c_lbl,
+                label_size=comp_val_pt,
+                label_fmt=_python_fmt_to_origin_fmt(gr["value_format"]),
+                has_yerr=has_err_i,
+                gl=gl,
+                plot_idx_1based=bar_p_idx,
+                tnr_face_dword=tnr_dword,
+            )
+
+        if has_any_dots:
+            dot_sh = ob.unique_origin_short_name(f"RepDotsL{layer_num_1based}", used_sheets, default="RepDots")
+            wks_dt = wb.add_sheet(dot_sh)
+            dot_cols: List[Tuple[str, str, List[float]]] = []
+            dot_meta: List[Tuple[int, str]] = []
+            jit_w = min(0.13, float(layer.style_overrides.get("jitter_width", 0.13)))
+            for i, gr in enumerate(grp_records):
+                rpts = gr["raw_points"]
+                if not rpts:
+                    continue
+                vals_s = sorted(float(v) for v in rpts)
+                n_v = len(vals_s)
+                xc = float(i + 1)
+                if n_v == 1:
+                    jx = [xc]
+                else:
+                    # Symmetric deterministic golden-angle offsets within ±jit_w (shifted slightly off x=xc center stem)
+                    jx = [
+                        xc + jit_w * math.sin(2.39996323 * (rk + 1) + 0.72 * i + 0.35)
+                        for rk in range(n_v)
+                    ]
+                b_col = len(dot_cols)
+                dot_cols.append(("X", f"D{i+1}_X", jx))
+                dot_cols.append(("Y", f"D{i+1}_Y", vals_s))
+                dot_meta.append((b_col, gr["color"]))
+
+            if dot_cols:
+                wks_dt.cols = len(dot_cols)
+                for ci, (ax_r, c_nm, c_vs) in enumerate(dot_cols):
+                    wks_dt.from_list(ci, c_vs, lname=c_nm, axis=ax_r)
+                wks_dt.cols_axis("".join(c[0] for c in dot_cols))
+                ob.activate_layer(op, gp, layer_num_1based)
+                dot_sz = max(5.8, float(spec["marker_size_pt"]) * 0.88)
+                for b_col, c_hex in dot_meta:
+                    pb_d = ot.compute_pastel_fill_and_border(c_hex)
+                    bdr_oc = ob._hex_to_origin_color(op, pb_d["border_hex"])
+                    p_d = gl.add_plot(wks_dt, coly=b_col + 1, colx=b_col, type="s")
+                    p_d.color = bdr_oc
+                    p_d.symbol_size = dot_sz
+                    p_d.symbol_kind = 2
+                    p_d.symbol_interior = 1  # White-filled 2D circle with crisp group-colored border
+
+        gl.lt_exec("label -r Legend;")
+        return []
+
+    # 3c. Native OriginPro 2024 Violin + Quartile Box Distribution (`violin_box`)
+    if layer.mark == "violin_box":
+        K = len(layer.series)
+        wks.cols = max(1, K)
+        for idx, s in enumerate(layer.series):
+            grp_lbl = str(s.meta.get("label") or s.name)
+            wks.from_list(idx, [float(v) for v in (s.y or []) if v is not None], lname=grp_lbl, axis="Y")
+        wks.cols_axis("Y" * max(1, K))
+
+        dr = op.make_DataRange()
+        for idx in range(K):
+            dr.Add("Y", wks.obj, 0, idx, -1, idx)
+        ob.activate_layer(op, gp, layer_num_1based)
+        gl.add_plot(dr, type=206)
+        gl.group(False)
+        gl.rescale()
+
+        fb_pal = ot.resolve_series_colors(max(1, K), scheme=(layer.color_scheme or "okabe_ito"))
+        distinct_v = {ot.normalize_hex(s.color) for s in layer.series if s.color}
+        use_fb_v = K > 1 and len(distinct_v) <= 1
+        w_int = ot.hex_to_origin_rgb_int("#FFFFFF")
+
+        for i, s in enumerate(layer.series):
+            c_hex = fb_pal[i % len(fb_pal)] if use_fb_v else ot.normalize_hex(s.color or fb_pal[i % len(fb_pal)])
+            pb = ot.compute_pastel_fill_and_border(c_hex)
+            fi = ot.hex_to_origin_rgb_int(pb["fill_hex"])
+            bi = ot.hex_to_origin_rgb_int(pb["border_hex"])
+            gl.lt_exec(
+                f"range rv = !{i + 1}; "
+                f"set rv -pf 1; set rv -pfb {w_int}; set rv -pbc {bi}; set rv -pbw {bdr_lw}; "
+                f"set rv -p2f 1; set rv -p2fb {fi}; set rv -p2fc {fi}; set rv -p2bc {bi}; set rv -p2bw {bdr_lw}; "
+                f"set rv -c {bi};"
+            )
+            grp_lbl = str(s.meta.get("label") or s.name)
+            leg_entries.append((i + 1, grp_lbl, pb["border_hex"], "bar"))
+
+        gl.lt_exec("label -r Legend;")
+        return leg_entries
+
+    # 3d. Horizontal Forest / Ablation Plot (`forest_ci`)
+    if layer.mark == "forest_ci" and layer.series:
+        s0 = layer.series[0]
+        ests = [float(v) for v in (s0.x or [])]
+        K_f = len(ests)
+        y_pos = [float(v) for v in (s0.y or [float(i + 1) for i in range(K_f)])]
+        ci_lo = [float(v) for v in (s0.meta.get("ci_low") or ests)]
+        ci_hi = [float(v) for v in (s0.meta.get("ci_high") or ests)]
+        it_cols = list(s0.meta.get("item_colors") or layer.palette_colors or ot.resolve_series_colors(max(1, K_f), scheme=layer.color_scheme))
+
+        f_cols: List[Tuple[str, str, List[float]]] = []
+        f_meta: List[Tuple[int, str]] = []
+        cap_dy = 0.10
+        for i in range(K_f):
+            yi = y_pos[i]
+            est_i = ests[i]
+            lo_i = ci_lo[i] if i < len(ci_lo) else est_i
+            hi_i = ci_hi[i] if i < len(ci_hi) else est_i
+            c_hex = ot.normalize_hex(it_cols[i % len(it_cols)])
+            b0 = len(f_cols)
+            # 0,1: horizontal CI bar; 2,3: left end-cap; 4,5: right end-cap; 6,7: center point estimate
+            f_cols.append(("X", f"F{i+1}_BarX", [lo_i, hi_i]))
+            f_cols.append(("Y", f"F{i+1}_BarY", [yi, yi]))
+            f_cols.append(("X", f"F{i+1}_CLoX", [lo_i, lo_i]))
+            f_cols.append(("Y", f"F{i+1}_CLoY", [yi - cap_dy, yi + cap_dy]))
+            f_cols.append(("X", f"F{i+1}_CHiX", [hi_i, hi_i]))
+            f_cols.append(("Y", f"F{i+1}_CHiY", [yi - cap_dy, yi + cap_dy]))
+            f_cols.append(("X", f"F{i+1}_PtX", [est_i]))
+            f_cols.append(("Y", f"F{i+1}_PtY", [yi]))
+            f_meta.append((b0, c_hex))
+
+        wks.cols = max(2, len(f_cols))
+        for ci, (ax_r, c_nm, c_vs) in enumerate(f_cols):
+            wks.from_list(ci, c_vs, lname=c_nm, axis=ax_r)
+        wks.cols_axis("".join(c[0] for c in f_cols))
+
+        ob.activate_layer(op, gp, layer_num_1based)
+        cw_u = int(spec["curve_w_units"])
+        mk_sz_f = float(s0.marker_size_pt or spec["marker_size_pt"]) * 1.15
+        for b0, c_hex in f_meta:
+            c_oc = ob._hex_to_origin_color(op, c_hex)
+            p_bar = gl.add_plot(wks, coly=b0 + 1, colx=b0, type="l")
+            p_bar.color = c_oc
+            gl.lt_exec(f"range rf = !{len(gl.plot_list())}; set rf -w {cw_u};")
+
+            for cx_c, cy_c in ((b0 + 2, b0 + 3), (b0 + 4, b0 + 5)):
+                p_cap = gl.add_plot(wks, coly=cy_c, colx=cx_c, type="l")
+                p_cap.color = c_oc
+                gl.lt_exec(f"range rc = !{len(gl.plot_list())}; set rc -w {sub_w_u};")
+
+            p_pt = gl.add_plot(wks, coly=b0 + 7, colx=b0 + 6, type="s")
+            p_pt.color = c_oc
+            p_pt.symbol_kind = 2
+            p_pt.symbol_interior = 0
+            p_pt.symbol_size = mk_sz_f
+
+        gl.lt_exec("label -r Legend;")
+        return []
+
+    # 3e. Reaction Free-Energy Step Profile (`energy_step`) + Optional `TS‡` Spline Saddle Barriers
+    if layer.mark == "energy_step" and layer.series:
+        hw_e = float(layer.style_overrides.get("plateau_half_width", 0.28))
+        cw_plat = int(round(1.35 * float(spec["curve_w_units"])))
+        cw_conn = max(750, int(spec["sub_w_units"]))
+        e_cols: List[Tuple[str, str, List[float]]] = []
+        # (name, c_hex, conn_cols_idx_with_is_spline, plat_cols_idx, skip_leg)
+        pw_draw_plan: List[Tuple[str, str, List[Tuple[int, int, bool]], List[Tuple[int, int]], bool]] = []
+
+        fb_pw = ot.resolve_series_colors(max(1, len(layer.series)), scheme=layer.color_scheme)
+        for p_i, s in enumerate(layer.series):
+            c_hex = ot.normalize_hex(s.color or fb_pw[p_i % len(fb_pw)])
+            skip_leg_s = bool(s.meta.get("skip_legend", False))
+            if str(s.meta.get("line_connect", "")).strip().lower() in ("spline", "bspline") and not s.meta.get("plateau_segments"):
+                sx_sp = [float(v) for v in (s.x or [])]
+                sy_sp = [float(v) for v in (s.y or [])]
+                if len(sx_sp) >= 2 and len(sx_sp) == len(sy_sp):
+                    cx_i = len(e_cols)
+                    e_cols.append(("X", f"TS{p_i+1}_X", sx_sp))
+                    e_cols.append(("Y", f"TS{p_i+1}_Y", sy_sp))
+                    pw_draw_plan.append((s.name, c_hex, [(cx_i, cx_i + 1, True)], [], True))
+                continue
+
+            steps_v = [float(v) for v in (s.y or s.meta.get("steps") or [])]
+            if len(steps_v) < 2:
+                continue
+            hw_s = float(s.meta.get("plateau_half_width", hw_e))
+            plat_segs = s.meta.get("plateau_segments") or [
+                ([float(k + 1) - hw_s, float(k + 1) + hw_s], [g_v, g_v]) for k, g_v in enumerate(steps_v)
+            ]
+            conn_segs = s.meta.get("connector_segments") or [
+                ([float(k + 1) + hw_s, float(k + 2) - hw_s], [steps_v[k], steps_v[k + 1]])
+                for k in range(len(steps_v) - 1)
+            ]
+            ts_segs = s.meta.get("ts_segments") or []
+            plat_cols_idx: List[Tuple[int, int]] = []
+            conn_cols_idx: List[Tuple[int, int, bool]] = []
+            for k_s, (sx_pair, sy_pair) in enumerate(conn_segs):
+                sx_l = [float(v) for v in sx_pair]
+                sy_l = [float(v) for v in sy_pair]
+                is_sp_seg = len(sx_l) >= 3
+                cx_i = len(e_cols)
+                e_cols.append(("X", f"PW{p_i+1}_CX{k_s+1}", sx_l))
+                e_cols.append(("Y", f"PW{p_i+1}_CY{k_s+1}", sy_l))
+                conn_cols_idx.append((cx_i, cx_i + 1, is_sp_seg))
+            for k_t, (tsx_pair, tsy_pair) in enumerate(ts_segs):
+                cx_i = len(e_cols)
+                e_cols.append(("X", f"PW{p_i+1}_TSX{k_t+1}", [float(v) for v in tsx_pair]))
+                e_cols.append(("Y", f"PW{p_i+1}_TSY{k_t+1}", [float(v) for v in tsy_pair]))
+                conn_cols_idx.append((cx_i, cx_i + 1, True))
+            for k_p, (px_pair, py_pair) in enumerate(plat_segs):
+                px_i = len(e_cols)
+                e_cols.append(("X", f"PW{p_i+1}_PX{k_p+1}", [float(px_pair[0]), float(px_pair[1])]))
+                e_cols.append(("Y", f"PW{p_i+1}_PY{k_p+1}", [float(py_pair[0]), float(py_pair[1])]))
+                plat_cols_idx.append((px_i, px_i + 1))
+            pw_draw_plan.append((s.name, c_hex, conn_cols_idx, plat_cols_idx, skip_leg_s))
+
+        wks.cols = max(2, len(e_cols))
+        for ci, (ax_r, c_nm, c_vs) in enumerate(e_cols):
+            wks.from_list(ci, c_vs, lname=c_nm, axis=ax_r)
+        wks.cols_axis("".join(c[0] for c in e_cols))
+
+        ob.activate_layer(op, gp, layer_num_1based)
+        # Draw dashed connectors & TS spline saddles first so thick horizontal plateaus sit cleanly on top of joints!
+        for _nm, c_hex, conn_list, _plat_list, _sk_l in pw_draw_plan:
+            c_oc = ob._hex_to_origin_color(op, c_hex)
+            for cx_i, cy_i, is_sp_seg in conn_list:
+                p_c = gl.add_plot(wks, coly=cy_i, colx=cx_i, type="l")
+                p_c.color = c_oc
+                cur_c_idx = len(gl.plot_list())
+                if is_sp_seg:
+                    gl.lt_exec(f"range rcn = !{cur_c_idx}; set rcn -l 9; set rcn -w {cw_conn}; set rcn -d 0;")
+                else:
+                    gl.lt_exec(f"range rcn = !{cur_c_idx}; set rcn -w {cw_conn}; set rcn -d 1;")
+
+        for nm, c_hex, _conn_list, plat_list, sk_l in pw_draw_plan:
+            if not plat_list:
+                continue
+            c_oc = ob._hex_to_origin_color(op, c_hex)
+            first_plat_plot_idx: Optional[int] = None
+            for px_i, py_i in plat_list:
+                p_p = gl.add_plot(wks, coly=py_i, colx=px_i, type="l")
+                p_p.color = c_oc
+                cur_p_idx = len(gl.plot_list())
+                if first_plat_plot_idx is None:
+                    first_plat_plot_idx = cur_p_idx
+                gl.lt_exec(f"range rpl = !{cur_p_idx}; set rpl -w {cw_plat}; set rpl -d 0;")
+            if first_plat_plot_idx is not None and not sk_l:
+                leg_entries.append((first_plat_plot_idx, nm, c_hex, "line"))
+
+        gl.lt_exec("label -r Legend;")
+        return leg_entries
+
+    # 3f. Kaplan-Meier Survival Step Curve + Greenwood 95% CI + Vertical Censor Ticks (`km_step`)
+    if layer.mark == "km_step" and layer.series:
+        km_cols: List[Tuple[str, str, List[float]]] = []
+        km_plan: List[Dict[str, Any]] = []
+        fb_km = ot.resolve_series_colors(max(1, len(layer.series)), scheme=layer.color_scheme)
+
+        for a_i, s in enumerate(layer.series):
+            xv_k = [float(v) for v in (s.x or [])]
+            yv_k = [float(v) for v in (s.y or [])]
+            if not xv_k or len(xv_k) != len(yv_k):
+                continue
+            c_hex = ot.normalize_hex(s.color or fb_km[a_i % len(fb_km)])
+            plan_it: Dict[str, Any] = {
+                "name": s.name,
+                "c_hex": c_hex,
+                "line_style": s.line_style,
+                "line_width_pt": s.line_width_pt,
+                "skip_legend": bool(s.meta.get("skip_legend", False)),
+                "col_x": len(km_cols),
+                "col_y": len(km_cols) + 1,
+                "col_lo": None,
+                "col_hi": None,
+                "col_cx": None,
+                "col_cy": None,
+            }
+            km_cols.append(("X", f"Arm{a_i+1}_Time", xv_k))
+            km_cols.append(("Y", s.name, yv_k))
+            if s.y_low is not None and s.y_high is not None and len(s.y_low) == len(xv_k) and len(s.y_high) == len(xv_k):
+                plan_it["col_lo"] = len(km_cols)
+                km_cols.append(("Y", f"Arm{a_i+1}_CILow", [float(v) for v in s.y_low]))
+                plan_it["col_hi"] = len(km_cols)
+                km_cols.append(("Y", f"Arm{a_i+1}_CIHigh", [float(v) for v in s.y_high]))
+            cx_raw = s.meta.get("censored_x") if s.meta.get("censored_x") is not None else s.meta.get("censored_time")
+            cy_raw = s.meta.get("censored_y") if s.meta.get("censored_y") is not None else s.meta.get("censored_surv")
+            if cx_raw and cy_raw and len(cx_raw) == len(cy_raw):
+                plan_it["col_cx"] = len(km_cols)
+                km_cols.append(("X", f"Arm{a_i+1}_CensT", [float(v) for v in cx_raw]))
+                plan_it["col_cy"] = len(km_cols)
+                km_cols.append(("Y", f"Arm{a_i+1}_CensS", [float(v) for v in cy_raw]))
+            km_plan.append(plan_it)
+
+        wks.cols = max(2, len(km_cols))
+        for ci, (ax_r, c_nm, c_vs) in enumerate(km_cols):
+            wks.from_list(ci, c_vs, lname=c_nm, axis=ax_r)
+        wks.cols_axis("".join(c[0] for c in km_cols))
+
+        ob.activate_layer(op, gp, layer_num_1based)
+        cw_main = int(spec["curve_w_units"])
+        cens_sz = 8.5 if float(spec["page_rect_w_in"]) >= 6.0 else max(3.8, float(spec["marker_size_pt"]) * 1.15)
+
+        # Pass 1: Step-Horz shaded 95% CI bands (`set rr -l 11`, `type=9`, `transparency=78`)
+        for pit in km_plan:
+            if pit["col_lo"] is not None and pit["col_hi"] is not None:
+                c_oc = ob._hex_to_origin_color(op, pit["c_hex"])
+                p_lo = gl.add_plot(wks, coly=int(pit["col_lo"]), colx=int(pit["col_x"]), type=200)
+                lo_idx = len(gl.plot_list())
+                p_hi = gl.add_plot(wks, coly=int(pit["col_hi"]), colx=int(pit["col_x"]), type=200)
+                hi_idx = len(gl.plot_list())
+                p_lo.color = c_oc
+                p_hi.color = c_oc
+                p_lo.set_fill_area(above=c_oc, type=9, below=c_oc)
+                p_lo.transparency = 78
+                p_hi.transparency = 100
+                gl.lt_exec(
+                    f"range rlo = !{lo_idx}; set rlo -l 11; set rlo -w 50; "
+                    f"range rhi = !{hi_idx}; set rhi -l 11; set rhi -w 50;"
+                )
+
+        # Pass 2: Main survival Step-Horz curves + crisp `-k 10` vertical bar (`|`) censor ticks
+        for pit in km_plan:
+            c_oc = ob._hex_to_origin_color(op, pit["c_hex"])
+            p_m = gl.add_plot(wks, coly=int(pit["col_y"]), colx=int(pit["col_x"]), type=200)
+            m_idx = len(gl.plot_list())
+            p_m.color = c_oc
+            d_c = _line_style_code(pit["line_style"])
+            gl.lt_exec(f"range rm = !{m_idx}; set rm -l 11; set rm -w {cw_main}; set rm -d {d_c};")
+            if pit["col_cx"] is not None and pit["col_cy"] is not None:
+                p_cs = gl.add_plot(wks, coly=int(pit["col_cy"]), colx=int(pit["col_cx"]), type=201)
+                cs_idx = len(gl.plot_list())
+                p_cs.color = c_oc
+                cw_cens = int(max(600, cw_main * 0.65))
+                gl.lt_exec(f"range rc = !{cs_idx}; set rc -k 10; set rc -z {cens_sz}; set rc -w {cw_cens};")
+            if not pit["skip_legend"]:
+                leg_entries.append((m_idx, pit["name"], pit["c_hex"], "line_dashed" if d_c == 1 else "line"))
+
+        gl.lt_exec("label -r Legend;")
+        return leg_entries
+
+    # 3g. 2D Vector / Quiver Field (`vector_quiver`: NaN-separated 2-col native vector shafts + 26° V-arrowheads)
+    if layer.mark == "vector_quiver" and layer.series:
+        has_bg_contour = any(ly.mark in ("contour_pseudocolor", "matrix_heatmap") for ly in panel.layers)
+        box_w_q = float(spec["box_sq_side_in"] if (has_bg_contour or panel.equal_aspect) else spec["box_rect_w_in"])
+        box_h_q = float(spec["box_sq_side_in"] if (has_bg_contour or panel.equal_aspect) else spec["box_rect_h_in"])
+        cos26 = math.cos(math.radians(26.0))
+        sin26 = math.sin(math.radians(26.0))
+
+        for v_i, s in enumerate(layer.series):
+            xv_q = [float(v) for v in (s.x or [])]
+            yv_q = [float(v) for v in (s.y or [])]
+            if not xv_q or len(xv_q) != len(yv_q):
+                continue
+            xe_raw = s.meta.get("x_end")
+            ye_raw = s.meta.get("y_end")
+            if xe_raw is not None and ye_raw is not None and len(xe_raw) == len(xv_q) and len(ye_raw) == len(yv_q):
+                x2_q = [float(v) for v in xe_raw]
+                y2_q = [float(v) for v in ye_raw]
+            else:
+                u_q = [float(v) for v in (s.meta.get("u") or [0.0] * len(xv_q))]
+                v_q = [float(v) for v in (s.meta.get("v") or [0.0] * len(yv_q))]
+                ux = sorted(set(round(v, 8) for v in xv_q))
+                uy = sorted(set(round(v, 8) for v in yv_q))
+                dx_g = min((ux[k + 1] - ux[k] for k in range(len(ux) - 1)), default=max(max(xv_q) - min(xv_q), 1.0) / 10.0)
+                dy_g = min((uy[k + 1] - uy[k] for k in range(len(uy) - 1)), default=max(max(yv_q) - min(yv_q), 1.0) / 10.0)
+                mags = [math.hypot(uu, vv) for uu, vv in zip(u_q, v_q)]
+                p95_m = float(np.percentile(mags, 95.0)) if mags else 1.0
+                v_scale = float(s.meta.get("arrow_scale") or (0.78 * min(dx_g, dy_g) / max(p95_m, 1e-9)))
+                x2_q = [xx + v_scale * uu for xx, uu in zip(xv_q, u_q)]
+                y2_q = [yy + v_scale * vv for yy, vv in zip(yv_q, v_q)]
+
+            x_sp_q = (
+                abs(float(panel.x_axis.limits[1]) - float(panel.x_axis.limits[0]))
+                if panel.x_axis.limits is not None
+                else max(max(xv_q + x2_q) - min(xv_q + x2_q), 1e-6)
+            )
+            y_sp_q = (
+                abs(float(panel.y1_axis.limits[1]) - float(panel.y1_axis.limits[0]))
+                if panel.y1_axis.limits is not None
+                else max(max(yv_q + y2_q) - min(yv_q + y2_q), 1e-6)
+            )
+            x_sp_q = max(x_sp_q, 1e-6)
+            y_sp_q = max(y_sp_q, 1e-6)
+
+            nan_v = float("nan")
+            seg_x: List[float] = []
+            seg_y: List[float] = []
+            w_scale_ref = box_w_q / 4.80
+            for x1_i, y1_i, x2_i, y2_i in zip(xv_q, yv_q, x2_q, y2_q):
+                ux_in = ((x2_i - x1_i) / x_sp_q) * box_w_q
+                uy_in = ((y2_i - y1_i) / y_sp_q) * box_h_q
+                len_in = math.hypot(ux_in, uy_in)
+                if len_in <= 1e-7:
+                    continue
+                ex, ey = ux_in / len_in, uy_in / len_in
+                wing_in = min(0.105 * w_scale_ref, max(0.024 * w_scale_ref, 0.30 * len_in))
+                bx_in, by_in = -ex, -ey
+                lx_in = wing_in * (bx_in * cos26 - by_in * sin26)
+                ly_in = wing_in * (bx_in * sin26 + by_in * cos26)
+                rx_in = wing_in * (bx_in * cos26 + by_in * sin26)
+                ry_in = wing_in * (-bx_in * sin26 + by_in * cos26)
+                xh_l = x2_i + (lx_in / max(box_w_q, 1e-6)) * x_sp_q
+                yh_l = y2_i + (ly_in / max(box_h_q, 1e-6)) * y_sp_q
+                xh_r = x2_i + (rx_in / max(box_w_q, 1e-6)) * x_sp_q
+                yh_r = y2_i + (ry_in / max(box_h_q, 1e-6)) * y_sp_q
+                seg_x.extend([x1_i, x2_i, xh_l, nan_v, x2_i, xh_r, nan_v])
+                seg_y.extend([y1_i, y2_i, yh_l, nan_v, y2_i, yh_r, nan_v])
+
+            if not seg_x:
+                continue
+            if v_i == 0:
+                wks_v = wks
+            else:
+                vq_sh = ob.unique_origin_short_name(f"Vec{v_i+1}", used_sheets, default="Vec")
+                wks_v = wb.add_sheet(vq_sh)
+            wks_v.cols = 2
+            wks_v.from_list(0, seg_x, lname="Vec_X", axis="X")
+            wks_v.from_list(1, seg_y, lname=s.name or "Vec_Y", axis="Y")
+            wks_v.cols_axis("XY")
+
+            ob.activate_layer(op, gp, layer_num_1based)
+            vec_hex = ot.normalize_hex(s.color or ("#111111" if has_bg_contour else "#1E293B"))
+            vec_int = ot.hex_to_origin_rgb_int(vec_hex)
+            vec_w = max(480, int(round(0.88 * float(spec["sub_w_units"]))))
+            p_vq = gl.add_plot(wks_v, coly=1, colx=0, type="l")
+            p_vq.color = ob._hex_to_origin_color(op, vec_hex)
+            vq_idx = len(gl.plot_list())
+            gl.lt_exec(f"range rv = !{vq_idx}; set rv -c {vec_int}; set rv -w {vec_w}; set rv -d 0; label -r Legend;")
+            if not s.meta.get("skip_legend") and not has_bg_contour and len(layer.series) > 1:
+                leg_entries.append((vq_idx, s.name, vec_hex, "line"))
+        return leg_entries
+
+    # 4. Line / Scatter / Step-Line / Shaded Band / Waterfall (`line_scatter`, `scatter`, `step_line`, `waterfall`, `deconv_envelope`)
     col_specs: List[Tuple[str, str, List[Any]]] = []
     series_col_map: List[Dict[str, Optional[int]]] = []
 
@@ -940,6 +1671,10 @@ def _plot_layer_into_glayer(
         col_x = int(c_map["x"])  # type: ignore[arg-type]
         col_y = int(c_map["y"])  # type: ignore[arg-type]
 
+        line_conn = str(s.meta.get("line_connect") or s.meta.get("connect") or "").strip().lower()
+        is_step_mark = layer.mark == "step_line" or line_conn in ("step", "step_horz")
+        is_spline_conn = line_conn in ("spline", "bspline")
+
         if c_map["up"] is not None and c_map["lo"] is not None:
             pb_band = ot.compute_pastel_fill_and_border(c_hex)
             band_oc = ob._hex_to_origin_color(op, pb_band["fill_hex"])
@@ -952,10 +1687,16 @@ def _plot_layer_into_glayer(
             p_up.set_fill_area(above=band_oc, type=9, below=band_oc)
             p_up.transparency = 22
             p_lo.transparency = 100
-            gl.lt_exec(f"range rup = !{up_idx}; set rup -w 50; range rlo = !{lo_idx}; set rlo -w 50;")
+            step_band_cmd = "set rup -l 11; set rlo -l 11; " if is_step_mark else ""
+            gl.lt_exec(f"range rup = !{up_idx}; range rlo = !{lo_idx}; {step_band_cmd}set rup -w 50; set rlo -w 50;")
 
         m_shape, m_int = _marker_cmd_and_interior(s.marker_style)
-        has_line = str(s.line_style or "solid").strip().lower() not in ("none", "", "false")
+        is_scatter_mark = layer.mark == "scatter"
+        has_line = (not is_scatter_mark) and (
+            is_step_mark or is_spline_conn or str(s.line_style or "solid").strip().lower() not in ("none", "", "false")
+        )
+        if is_scatter_mark and m_shape is None:
+            m_shape, m_int = 2, 1
         has_marker = m_shape is not None
 
         if has_line and has_marker:
@@ -985,6 +1726,10 @@ def _plot_layer_into_glayer(
         d_code = _line_style_code(s.line_style)
         cmd_parts: List[str] = []
         if has_line:
+            if is_step_mark:
+                cmd_parts.append("set rm -l 11;")
+            elif is_spline_conn:
+                cmd_parts.append("set rm -l 9;")
             cmd_parts.append(f"set rm -w {w_units}; set rm -d {d_code};")
         if has_marker and m_shape == 20:
             cmd_parts.append("set rm -k 20;")
@@ -992,11 +1737,23 @@ def _plot_layer_into_glayer(
             p_main.set_fill_area(above=c_color, type=1, below=c_color)
             p_main.transparency = int(round((1.0 - float(s.fill_alpha)) * 100.0))
 
+        # High-density scatter transparency (`volcano_plot` or >=150 points without connecting line)
+        n_data_pts = len(s.y or [])
+        is_dense_scatter = (not has_line) and has_marker and (n_data_pts >= 150 or s.meta.get("alpha_pct") is not None)
+        if is_dense_scatter:
+            alpha_t = int(s.meta.get("alpha_pct", 35))
+            p_main.transparency = alpha_t
+            cmd_parts.append(f"set rm -t {alpha_t};")
+
         if cmd_parts:
             gl.lt_exec(f"range rm = !{main_idx}; " + " ".join(cmd_parts))
 
         if has_marker and m_shape is not None and m_shape != 20:
-            p_main.symbol_size = float(s.marker_size_pt or spec["marker_size_pt"])
+            if is_dense_scatter and s.marker_size_pt is None:
+                eff_mk_sz = 4.8 if "ns" in str(s.name).lower() else 6.5
+            else:
+                eff_mk_sz = float(s.marker_size_pt or spec["marker_size_pt"])
+            p_main.symbol_size = eff_mk_sz
             # Python symbol_kind matches LabTalk shape code (1=sq, 2=circle, 3=up-tri, 4=down-tri, 5=diamond)
             p_main.symbol_kind = int(m_shape)
             # Python symbol_interior: 0 = Solid filled, 1 = Open white-filled (m_int is 1 for solid, 2 for open)
@@ -1008,13 +1765,14 @@ def _plot_layer_into_glayer(
         if has_line and has_marker:
             sw_kind = "open_circle" if m_int == 2 else "line_sphere"
         elif has_marker:
-            sw_kind = "scatter"
+            sw_kind = "scatter_open" if m_int == 2 else "scatter"
         elif d_code == 1:
             sw_kind = "line_dashed"
         else:
             sw_kind = "line"
 
-        leg_entries.append((main_idx, s.name, c_hex, sw_kind))
+        if not s.meta.get("skip_legend"):
+            leg_entries.append((main_idx, s.name, c_hex, sw_kind))
 
     return leg_entries
 
@@ -1030,7 +1788,9 @@ def _render_guides_into_glayer(
     x_bounds: Tuple[float, float],
     y_bounds: Tuple[float, float],
     *,
+    rect_pct: Optional[Tuple[float, float, float, float]] = None,
     invert_x: bool = False,
+    invert_y: bool = False,
     log_x: bool = False,
     log_y: bool = False,
 ) -> None:
@@ -1042,6 +1802,11 @@ def _render_guides_into_glayer(
     y_lo, y_hi = min(y_bounds), max(y_bounds)
     x_span = max(x_hi - x_lo, 1e-6)
     y_span = max(y_hi - y_lo, 1e-6)
+
+    if rect_pct is not None:
+        l_p, t_p, w_p, h_p = rect_pct
+    else:
+        l_p, t_p, w_p, h_p = ob._query_layer_rect_page_pct(op, gp, layer_num_1based, {})[:4]
 
     seg_cols: List[Tuple[str, List[float], str, List[float], str, int, int]] = []
     # (data_x, data_y, rich_lbl, c_int, fs, pos_scatter, dx_pct, dy_top_pct, no_repel)
@@ -1055,9 +1820,11 @@ def _render_guides_into_glayer(
         [float(g.value) for g in guides if g.kind == "hline" and g.value is not None],
         reverse=True,
     )
-    all_vline_xs = sorted(
-        [float(g.value) for g in guides if g.kind == "vline" and g.value is not None]
-    )
+    ic50_drop_xs = [
+        float(g.value)
+        for g in guides
+        if g.kind == "vline" and g.value is not None and g.meta.get("guide_role") == "ic50_drop"
+    ]
 
     for idx, g in enumerate(guides):
         c_hex = g.color or "#3E86DE"
@@ -1066,19 +1833,73 @@ def _render_guides_into_glayer(
         d_code = _line_style_code(g.line_style)
         fs = min(base_callout_fs, float(g.font_size_pt or base_callout_fs))
         rich_lbl = _format_origin_guide_text(g.label)
+        g_role = str(g.meta.get("guide_role", ""))
 
-        if g.kind == "vline" and g.value is not None:
+        if g.kind == "sig_bracket" and g.value is not None and g.x is not None and (g.x2 is not None or g.x_end is not None):
+            x1 = float(g.x)
+            x2 = float(g.x2 if g.x2 is not None else g.x_end)
+            y_bar = float(g.value)
+            drop = float(g.tip_drop) if (g.tip_drop is not None and float(g.tip_drop) > 0.0) else (0.026 * y_span)
+            brk_hex = g.color or "#111111"
+            brk_int = ot.hex_to_origin_rgb_int(brk_hex)
+            seg_cols.append(
+                (
+                    f"SBX{idx+1}",
+                    [x1, x1, x2, x2],
+                    f"SBY{idx+1}",
+                    [y_bar - drop, y_bar, y_bar, y_bar - drop],
+                    brk_hex,
+                    sub_w,
+                    0,
+                )
+            )
+            raw_star = str(g.label or "").strip()
+            if raw_star:
+                xm = 0.5 * (x1 + x2)
+                xf_m = ob._map_data_to_frac(xm, x_lo, x_hi, invert_x, log_x)
+                yf_raw = ob._map_data_to_frac(y_bar, y_lo, y_hi, False, log_y)
+                yf_b = (1.0 - yf_raw) if invert_y else yf_raw
+                xp_star = l_p + xf_m * w_p
+                is_star_only = all(ch == "*" for ch in raw_star)
+                dy_star_pct = -0.95 if is_star_only else -1.85
+                yp_star = max(t_p + 1.8, t_p + (1.0 - yf_b) * h_p + dy_star_pct)
+                star_fs = min(float(spec.get("annotation_pt", spec.get("callout_pt", 22.0))), 19.5 if is_star_only else 18.0)
+                ob.add_page_text_label(
+                    op,
+                    gp,
+                    gl,
+                    layer_num_1based,
+                    f"SigBrk_{idx+1}",
+                    raw_star,
+                    xp_star,
+                    yp_star,
+                    fontsize=star_fs,
+                    color_int=brk_int,
+                    pos_scatter=0,
+                    format_math=False,
+                )
+
+        elif g.kind == "vline" and g.value is not None:
             xv = float(g.value)
-            seg_cols.append((f"GX{idx+1}", [xv, xv], f"GY{idx+1}", [y_lo, y_hi], c_hex, w_units, d_code))
-            if rich_lbl:
-                pos_sc = 1 if g.label_side == "left" else 2
-                dx_p = -0.9 if pos_sc == 1 else 0.9
-                ly = y_lo + float(g.shoulder_y_frac or 0.80) * y_span
-                callouts.append((xv, ly, rich_lbl, c_int, fs, pos_sc, dx_p, 0.0, False))
+            if g_role == "ic50_drop":
+                ref_y_top = float(g.meta.get("ref_y", g.meta.get("mid_y", 50.0)))
+                seg_cols.append((f"GX{idx+1}", [xv, xv], f"GY{idx+1}", [y_lo, min(y_hi, ref_y_top)], c_hex, w_units, d_code))
+            else:
+                seg_cols.append((f"GX{idx+1}", [xv, xv], f"GY{idx+1}", [y_lo, y_hi], c_hex, w_units, d_code))
+                if rich_lbl:
+                    pos_sc = 1 if g.label_side == "left" else 2
+                    dx_p = -0.9 if pos_sc == 1 else 0.9
+                    ly = y_lo + float(g.shoulder_y_frac or 0.80) * y_span
+                    callouts.append((xv, ly, rich_lbl, c_int, fs, pos_sc, dx_p, 0.0, False))
 
         elif g.kind == "hline" and g.value is not None:
             yv = float(g.value)
-            seg_cols.append((f"GX{idx+1}", [x_lo, x_hi], f"GY{idx+1}", [yv, yv], c_hex, w_units, d_code))
+            if g_role == "ic50_mid_response" and ic50_drop_xs:
+                x_end_h = max(ic50_drop_xs) if not invert_x else min(ic50_drop_xs)
+                x_start_h = x_hi if invert_x else x_lo
+                seg_cols.append((f"GX{idx+1}", [x_start_h, x_end_h], f"GY{idx+1}", [yv, yv], c_hex, w_units, d_code))
+            else:
+                seg_cols.append((f"GX{idx+1}", [x_lo, x_hi], f"GY{idx+1}", [yv, yv], c_hex, w_units, d_code))
             if rich_lbl:
                 has_close_upper = any(0.001 * y_span < (yu - yv) < 0.14 * y_span for yu in all_hline_ys)
                 dy_hl = 4.6 if has_close_upper else -5.0
@@ -1139,6 +1960,49 @@ def _render_guides_into_glayer(
             if rich_lbl:
                 callouts.append((0.5 * (x0 + x1), 0.5 * (y0 + y1), rich_lbl, c_int, fs, 0, 0.0, -2.4, False))
 
+        elif g.kind == "slope_triangle" and g.x is not None and g.y is not None and (g.x2 is not None or g.x_end is not None):
+            x1_t = float(g.x)
+            x2_t = float(g.x2 if g.x2 is not None else g.x_end)
+            y1_t = float(g.y)
+            if g.y_end is not None:
+                y2_t = float(g.y_end)
+            else:
+                m_sl = float(g.value if g.value is not None else 1.0)
+                if log_x and log_y and x1_t > 0 and x2_t > 0 and y1_t > 0:
+                    y2_t = y1_t * ((x2_t / x1_t) ** m_sl)
+                elif (not log_x) and log_y and y1_t > 0:
+                    y2_t = 10.0 ** (math.log10(y1_t) + m_sl * (x2_t - x1_t))
+                elif log_x and (not log_y) and x1_t > 0 and x2_t > 0:
+                    y2_t = y1_t + m_sl * (math.log10(x2_t) - math.log10(x1_t))
+                else:
+                    y2_t = y1_t + m_sl * (x2_t - x1_t)
+            tri_hex = g.color or "#334155"
+            tri_int = ot.hex_to_origin_rgb_int(tri_hex)
+            seg_cols.append(
+                (
+                    f"STX{idx+1}",
+                    [x1_t, x2_t, x2_t, x1_t],
+                    f"STY{idx+1}",
+                    [y1_t, y1_t, y2_t, y1_t],
+                    tri_hex,
+                    w_units,
+                    0,
+                )
+            )
+            if rich_lbl:
+                xm_t = math.sqrt(x1_t * x2_t) if (log_x and x1_t > 0 and x2_t > 0) else 0.5 * (x1_t + x2_t)
+                ym_t = math.sqrt(y1_t * y2_t) if (log_y and y1_t > 0 and y2_t > 0) else 0.5 * (y1_t + y2_t)
+                xf_b = ob._map_data_to_frac(x2_t, x_lo, x_hi, invert_x, log_x)
+                xf_m = ob._map_data_to_frac(xm_t, x_lo, x_hi, invert_x, log_x)
+                yf_b_raw = ob._map_data_to_frac(y1_t, y_lo, y_hi, False, log_y)
+                yf_m_raw = ob._map_data_to_frac(ym_t, y_lo, y_hi, False, log_y)
+                yf_b = (1.0 - yf_b_raw) if invert_y else yf_b_raw
+                yf_m = (1.0 - yf_m_raw) if invert_y else yf_m_raw
+                pos_sc_t = 1 if xf_b >= xf_m else 2
+                dx_t = -0.95 if pos_sc_t == 1 else 0.95
+                dy_t = -2.1 if yf_b <= yf_m else 2.1
+                callouts.append((xm_t, ym_t, rich_lbl, tri_int, min(fs, 19.5), pos_sc_t, dx_t, dy_t, True))
+
         elif g.kind in ("peak_tag", "text") and rich_lbl:
             tx = float(g.x if g.x is not None else (g.value if g.value is not None else x_lo + 0.5 * x_span))
             ty = float(g.y if g.y is not None else (y_lo + float(g.shoulder_y_frac or 0.77) * y_span))
@@ -1182,17 +2046,293 @@ def _render_guides_into_glayer(
         )
 
 
+def _render_point_callouts_into_glayer(
+    op: Any,
+    gp: Any,
+    gl: Any,
+    layer_num_1based: int,
+    point_callouts: Sequence[Dict[str, Any]],
+    wb: Any,
+    used_sheets: set[str],
+    x_bounds: Tuple[float, float],
+    y_bounds: Tuple[float, float],
+    rect_pct: Tuple[float, float, float, float],
+    *,
+    invert_x: bool = False,
+    log_x: bool = False,
+    log_y: bool = False,
+    top_reserved_pct: float = 0.0,
+) -> None:
+    """
+    Render non-overlapping leader segments + borderless (`FrameType=0`) gene/protein labels inside the plot frame.
+    """
+    if not point_callouts:
+        return
+
+    spec = ob.get_active_spec()
+    pw_in, _ph_in = ob._PAGE_TARGET_INCHES.get(gp.name, (float(spec["page_rect_w_in"]), float(spec["page_rect_h_in"])))
+    upi = ob._origin_units_per_inch(spec)
+    fs_lbl = min(float(spec["callout_pt"]), 18.5)
+    ldr_w = max(520, int(round(float(spec["sub_w_units"]) * 0.80)))
+    l_p, t_p, w_p, h_p = rect_pct
+    x_lo, x_hi = min(x_bounds), max(x_bounds)
+    y_lo, y_hi = min(y_bounds), max(y_bounds)
+
+    def _pct_to_data_x(xp: float) -> float:
+        fx = max(0.01, min(0.99, (xp - l_p) / max(w_p, 1e-6)))
+        a, b = (x_hi, x_lo) if invert_x else (x_lo, x_hi)
+        if log_x and a > 0 and b > 0:
+            return 10.0 ** (math.log10(a) + fx * (math.log10(b) - math.log10(a)))
+        return a + fx * (b - a)
+
+    def _pct_to_data_y(yp_top: float) -> float:
+        fy = max(0.01, min(0.99, 1.0 - (yp_top - t_p) / max(h_p, 1e-6)))
+        if log_y and y_lo > 0 and y_hi > 0:
+            return 10.0 ** (math.log10(y_lo) + fy * (math.log10(y_hi) - math.log10(y_lo)))
+        return y_lo + fy * (y_hi - y_lo)
+
+    y_min_safe = t_p + max(4.2, top_reserved_pct)
+    y_max_safe = t_p + h_p - 5.2
+
+    # Detect vertical guide thresholds (e.g. ±fc_cutoff in volcano_plot) so callout labels stay cleanly inside their wing when possible
+    neg_cut_xf = 0.46
+    pos_cut_xf = 0.54
+    items_left: List[Dict[str, Any]] = []
+    items_right: List[Dict[str, Any]] = []
+    for c_idx, pc in enumerate(point_callouts):
+        if not isinstance(pc, dict) or pc.get("x") is None or pc.get("y") is None:
+            continue
+        lbl = str(pc.get("label", "")).strip()
+        if not lbl:
+            continue
+        xv, yv = float(pc["x"]), float(pc["y"])
+        xf = ob._map_data_to_frac(xv, x_lo, x_hi, invert_x, log_x)
+        yf = ob._map_data_to_frac(yv, y_lo, y_hi, False, log_y)
+        px = l_p + xf * w_p
+        py = t_p + (1.0 - yf) * h_p
+        txt_w_pct = max(5.0, ((0.52 * len(lbl) + 0.30) * fs_lbl / (pw_in * upi)) * 100.0)
+
+        if xf < 0.5:
+            # Prefer placing right of outer-left points while staying left of vertical threshold if it fits; else outer-left
+            wing_right_lim = l_p + (0.34 if x_lo < -1.5 < x_hi else neg_cut_xf) * w_p
+            can_go_left = (px - 3.0 - txt_w_pct) >= (l_p + 1.6)
+            can_fit_wing_inward = (px + 2.8 + txt_w_pct) <= wing_right_lim
+            if can_fit_wing_inward and (not can_go_left or xf < 0.22):
+                ax = px + 2.8
+                pos_sc = 2
+            elif can_go_left:
+                ax = px - 2.8
+                pos_sc = 1
+            else:
+                ax = min(l_p + 0.45 * w_p - txt_w_pct, max(l_p + 1.8, px + 2.6))
+                pos_sc = 2
+            ay = max(y_min_safe, min(y_max_safe, py - 2.0))
+            items_left.append(
+                {
+                    "idx": c_idx,
+                    "lbl": lbl,
+                    "color": str(pc.get("color") or "#222222"),
+                    "px": px,
+                    "py": py,
+                    "ax": ax,
+                    "ay": ay,
+                    "pos_sc": pos_sc,
+                    "w": txt_w_pct,
+                }
+            )
+        else:
+            wing_left_lim = l_p + (0.66 if x_lo < 1.5 < x_hi else pos_cut_xf) * w_p
+            can_go_right = (px + 3.0 + txt_w_pct) <= (l_p + w_p - 1.6)
+            can_fit_wing_inward = (px - 2.8 - txt_w_pct) >= wing_left_lim
+            if can_fit_wing_inward and (not can_go_right or xf > 0.78):
+                ax = px - 2.8
+                pos_sc = 1
+            elif can_go_right:
+                ax = px + 2.8
+                pos_sc = 2
+            else:
+                ax = max(l_p + 0.55 * w_p + txt_w_pct, min(l_p + w_p - 1.8, px - 2.6))
+                pos_sc = 1
+            ay = max(y_min_safe, min(y_max_safe, py - 2.0))
+            items_right.append(
+                {
+                    "idx": c_idx,
+                    "lbl": lbl,
+                    "color": str(pc.get("color") or "#222222"),
+                    "px": px,
+                    "py": py,
+                    "ax": ax,
+                    "ay": ay,
+                    "pos_sc": pos_sc,
+                    "w": txt_w_pct,
+                }
+            )
+
+    min_dy = 5.1
+    for grp in (items_left, items_right):
+        grp.sort(key=lambda d: d["ay"])
+        for _it in range(20):
+            moved = False
+            for i in range(len(grp) - 1):
+                a, b = grp[i], grp[i + 1]
+                # Check horizontal overlap of label boxes before forcing vertical push
+                ax0 = a["ax"] if a["pos_sc"] == 2 else (a["ax"] - a["w"])
+                ax1 = a["ax"] + a["w"] if a["pos_sc"] == 2 else a["ax"]
+                bx0 = b["ax"] if b["pos_sc"] == 2 else (b["ax"] - b["w"])
+                bx1 = b["ax"] + b["w"] if b["pos_sc"] == 2 else b["ax"]
+                if min(ax1, bx1) + 1.8 > max(ax0, bx0) and (b["ay"] - a["ay"]) < min_dy:
+                    push = 0.52 * (min_dy - (b["ay"] - a["ay"]))
+                    a["ay"] = max(y_min_safe, a["ay"] - push)
+                    b["ay"] = min(y_max_safe, b["ay"] + push)
+                    if (b["ay"] - a["ay"]) < min_dy * 0.92:
+                        if a["ay"] <= y_min_safe + 0.2:
+                            b["ay"] = min(y_max_safe, a["ay"] + min_dy)
+                        else:
+                            a["ay"] = max(y_min_safe, b["ay"] - min_dy)
+                    moved = True
+            if not moved:
+                break
+
+    resolved_all = items_left + items_right
+    if not resolved_all:
+        return
+
+    ldr_sh = ob.unique_origin_short_name(f"CalloutL{layer_num_1based}", used_sheets, default="Callouts")
+    wks_ldr = wb.add_sheet(ldr_sh)
+    wks_ldr.cols = 2 * len(resolved_all)
+    wks_ldr.cols_axis("XY" * len(resolved_all))
+    ob.activate_layer(op, gp, layer_num_1based)
+
+    ldr_ink_oc = ob._hex_to_origin_color(op, "#3B4252")
+    ink_lbl_int = ot.hex_to_origin_rgb_int("#111111")
+
+    for k_i, it in enumerate(resolved_all):
+        dx_v = it["ax"] - it["px"]
+        dy_v = it["ay"] - it["py"]
+        dist_pct = math.hypot(dx_v, dy_v)
+        # Trim 0.45% at point rim and 0.35% before text edge so leader segment never touches circle center or glyphs
+        t0 = min(0.32, 0.48 / max(dist_pct, 1e-3))
+        t1 = max(0.68, 1.0 - 0.38 / max(dist_pct, 1e-3))
+        sx_p = it["px"] + t0 * dx_v
+        sy_p = it["py"] + t0 * dy_v
+        ex_p = it["px"] + t1 * dx_v
+        ey_p = it["py"] + t1 * dy_v
+
+        wks_ldr.from_list(2 * k_i, [_pct_to_data_x(sx_p), _pct_to_data_x(ex_p)], lname=f"LX{k_i+1}", axis="X")
+        wks_ldr.from_list(2 * k_i + 1, [_pct_to_data_y(sy_p), _pct_to_data_y(ey_p)], lname=f"LY{k_i+1}", axis="Y")
+        p_ldr = gl.add_plot(wks_ldr, coly=2 * k_i + 1, colx=2 * k_i, type="l")
+        p_ldr.color = ldr_ink_oc
+        gl.lt_exec(f"range rld = !{len(gl.plot_list())}; set rld -w {ldr_w}; set rld -d 0;")
+
+        ob.add_page_text_label(
+            op,
+            gp,
+            gl,
+            layer_num_1based,
+            f"PtCall_{k_i+1}",
+            it["lbl"],
+            it["ax"],
+            it["ay"],
+            fontsize=fs_lbl,
+            color_int=ink_lbl_int,
+            pos_scatter=it["pos_sc"],
+            format_math=False,
+        )
+
+    gl.lt_exec("label -r Legend;")
+
+
+def _format_cat_label_chem_subscripts(raw_c: str) -> str:
+    """Convert explicit `O_2` / `H_2O` / `CO_2` subscript tokens in reaction step labels to Origin `\\-(...)`."""
+    s = str(raw_c or "").strip()
+    if "_" not in s and "^" not in s:
+        return s
+    s = s.replace("$", "")
+    s = re.sub(r"_\{([^{}]+)\}", r"\\-(\1)", s)
+    s = re.sub(r"([A-Za-z0-9)])_(\d+)", r"\1\\-(\2)", s)
+    s = re.sub(r"\^\{([^{}]+)\}", r"\\+(\1)", s)
+    return s
+
+
 def _extract_panel_categories(panel: cg.PanelSpec) -> List[str]:
+    has_energy = any(ly.mark == "energy_step" for ly in panel.layers)
+    fmt_fn = _format_cat_label_chem_subscripts if has_energy else str
     if panel.x_axis.categories:
-        return [str(c) for c in panel.x_axis.categories]
+        return [fmt_fn(str(c)) for c in panel.x_axis.categories]
     for ly in panel.layers:
-        if ly.categories:
-            return [str(c) for c in ly.categories]
-        if ly.mark in ("stat_distribution", "stat_box_jitter") and ly.series:
+        if ly.categories and ly.mark != "forest_ci":
+            return [fmt_fn(str(c)) for c in ly.categories]
+        if ly.mark in ("stat_distribution", "stat_box_jitter", "violin_box", "bar_dot_error") and ly.series:
             return [str(s.meta.get("label") or s.name) for s in ly.series]
         if ly.series and ly.series[0].x and all(isinstance(v, str) for v in ly.series[0].x):
-            return [str(v) for v in ly.series[0].x]
+            return [fmt_fn(str(v)) for v in ly.series[0].x]
     return []
+
+
+def _eval_axis_formula(formula: str, x_val: float) -> float:
+    expr = re.sub(r"\b[xX]\b", f"({float(x_val):.12g})", str(formula or "x").replace("^", "**"))
+    safe_ns = {
+        "__builtins__": {},
+        "math": math,
+        "ln": math.log,
+        "log": math.log10,
+        "log10": math.log10,
+        "exp": math.exp,
+        "sqrt": math.sqrt,
+        "abs": abs,
+    }
+    return float(eval(expr, safe_ns, {}))
+
+
+def _apply_axis_breaks_if_any(
+    gl: Any,
+    panel: cg.PanelSpec,
+    x_bounds: Tuple[float, float],
+    y_bounds: Tuple[float, float],
+) -> None:
+    x_ax = panel.x_axis
+    y_ax = panel.y1_axis
+    x_breaks = getattr(x_ax, "breaks", None) or []
+    if x_breaks:
+        bx = x_breaks[0]
+        b0, b1 = float(bx["from"]), float(bx["to"])
+        if not x_ax.invert:
+            b0, b1 = min(b0, b1), max(b0, b1)
+        pos_pct = float(bx.get("position_pct", bx.get("position", 48.0)))
+        sc_after = str(bx.get("scale_after", "linear")).strip().lower()
+        sc2_code = 2 if sc_after in ("log10", "log") else 1
+        inc1 = bx.get("inc_before") or bx.get("inc1") or ob.compute_nice_linear_step(x_bounds[0], min(b0, b1), max_ticks=3) or 1.0
+        inc2 = bx.get("inc_after") or bx.get("inc2") or (
+            1 if sc2_code == 2 else (ob.compute_nice_linear_step(max(b0, b1), x_bounds[1], max_ticks=3) or 1.0)
+        )
+        gl.lt_exec(
+            f"layer.x.breaks.enable=1; layer.x.breaks.count=1; "
+            f"layer.x.break1.from={b0}; layer.x.break1.to={b1}; "
+            f"layer.x.break1.pos={pos_pct}; "
+            f"layer.x.inc={inc1}; layer.x.break1.inc={inc2}; layer.x.break1.inc1={inc1}; layer.x.break1.inc2={inc2}; "
+            f"layer.x.break1.scale2={sc2_code};"
+        )
+
+    y_breaks = getattr(y_ax, "breaks", None) or []
+    if y_breaks:
+        by = y_breaks[0]
+        yb0, yb1 = float(by["from"]), float(by["to"])
+        if not y_ax.invert:
+            yb0, yb1 = min(yb0, yb1), max(yb0, yb1)
+        ypos_pct = float(by.get("position_pct", by.get("position", 48.0)))
+        ysc_after = str(by.get("scale_after", "linear")).strip().lower()
+        ysc2_code = 2 if ysc_after in ("log10", "log") else 1
+        yinc1 = by.get("inc_before") or by.get("inc1") or ob.compute_nice_linear_step(y_bounds[0], min(yb0, yb1), max_ticks=3) or 1.0
+        yinc2 = by.get("inc_after") or by.get("inc2") or (
+            1 if ysc2_code == 2 else (ob.compute_nice_linear_step(max(yb0, yb1), y_bounds[1], max_ticks=3) or 1.0)
+        )
+        gl.lt_exec(
+            f"layer.y.breaks.enable=1; layer.y.breaks.count=1; "
+            f"layer.y.break1.from={yb0}; layer.y.break1.to={yb1}; "
+            f"layer.y.break1.pos={ypos_pct}; "
+            f"layer.y.inc={yinc1}; layer.y.break1.inc={yinc2}; layer.y.break1.inc1={yinc1}; layer.y.break1.inc2={yinc2}; "
+            f"layer.y.break1.scale2={ysc2_code};"
+        )
 
 
 def _apply_single_axis_layer_style(
@@ -1208,6 +2348,7 @@ def _apply_single_axis_layer_style(
     tick_label_pt: Optional[float] = None,
     hide_y_override: bool = False,
     reserve_top_legend_space: bool = False,
+    max_x_ticks_override: Optional[int] = None,
 ) -> Tuple[Tuple[float, float], Tuple[float, float]]:
     spec = ob.get_active_spec()
     ob.activate_layer(op, gp, layer_num_1based)
@@ -1220,13 +2361,16 @@ def _apply_single_axis_layer_style(
         li, ti, wi, hi = rect_in
         gl.lt_exec(f"layer.unit=2; layer.left={li}; layer.top={ti}; layer.width={wi}; layer.height={hi};")
         lw_in, lh_in = float(wi), float(hi)
+        eff_rect_pct = ot.rect_in_to_page_pct(li, ti, wi, hi, pw_in, ph_in)
     elif rect_pct is not None and not (has_2d_mat and panel.equal_aspect):
         l_p, t_p, w_p, h_p = rect_pct
         gl.lt_exec(f"layer.unit=1; layer.left={l_p}; layer.top={t_p}; layer.width={w_p}; layer.height={h_p};")
         lw_in, lh_in = pw_in * (float(w_p) / 100.0), ph_in * (float(h_p) / 100.0)
+        eff_rect_pct = rect_pct
     else:
         lw_in = float(spec["box_sq_side_in"] if has_2d_mat else spec["box_rect_w_in"])
         lh_in = float(spec["box_sq_side_in"] if has_2d_mat else spec["box_rect_h_in"])
+        eff_rect_pct = rect_pct or ob._query_layer_rect_page_pct(op, gp, layer_num_1based, {})[:4]
 
     raw_bt = float(panel.box_linewidth_pt or spec["box_lw_pt"])
     bt = float(spec["box_lw_pt"]) if abs(raw_bt - 3.0) < 0.05 else raw_bt
@@ -1246,21 +2390,25 @@ def _apply_single_axis_layer_style(
     x_type = 2 if x_is_log else 1
     y_type = 2 if y_is_log else 1
 
-    has_2d_mat = any(ly.mark in ("contour_pseudocolor", "matrix_heatmap") for ly in panel.layers)
-    has_stat = any(ly.mark in ("stat_distribution", "stat_box_jitter") for ly in panel.layers)
-    is_cat_x = ((x_ax.axis_kind == "categorical") or has_stat) and not has_2d_mat
+    has_stat = any(ly.mark in ("stat_distribution", "stat_box_jitter", "violin_box", "bar_dot_error") for ly in panel.layers)
+    has_forest = any(ly.mark == "forest_ci" for ly in panel.layers)
+    is_cat_x = ((x_ax.axis_kind == "categorical") or has_stat) and not has_2d_mat and not has_forest
+    is_cat_y = (y_ax.axis_kind == "categorical" or has_forest) and not has_2d_mat
     x_ticks = 0 if is_cat_x else (5 if x_is_log else 1)
-    if y_ax.axis_kind == "intensity_arbitrary" or hide_y_override:
+    if y_ax.axis_kind == "intensity_arbitrary" or hide_y_override or is_cat_y:
         y_ticks = 0
         y_labels = 0
     else:
         y_ticks = 5 if y_is_log else 1
         y_labels = 1
 
+    has_linked_top_x = bool(getattr(x_ax, "linked_top", None))
+    x_show_axes = 1 if has_linked_top_x else 3
+
     gl.lt_exec(
         f"layer.x.grid.show=0; layer.y.grid.show=0; "
         f"layer.x.type={x_type}; layer.y.type={y_type}; "
-        f"layer.x.showAxes=3; layer.y.showAxes=3; "
+        f"layer.x.showAxes={x_show_axes}; layer.y.showAxes=3; "
         f"layer.x.thickness={bt}; layer.y.thickness={bt}; "
         f"layer.x2.thickness={bt}; layer.y2.thickness={bt}; "
         f"layer.x.color={ink_int}; layer.y.color={ink_int}; "
@@ -1284,7 +2432,7 @@ def _apply_single_axis_layer_style(
     )
     cats = _extract_panel_categories(panel) if is_cat_x else []
 
-    is_1d_eq = panel.equal_aspect and not has_2d_mat and not is_cat_x and not x_is_log and not y_is_log
+    is_1d_eq = panel.equal_aspect and not has_2d_mat and not is_cat_x and not is_cat_y and not x_is_log and not y_is_log
     eq_step_resolved: Optional[float] = None
     if is_1d_eq:
         xs_eq = [
@@ -1314,6 +2462,8 @@ def _apply_single_axis_layer_style(
             else:
                 gl.set_xlim(x0, x1)
             x_bounds = (min(x0, x1), max(x0, x1))
+            if is_cat_x and cats:
+                gl.lt_exec(f"layer.x.from={x_bounds[0]}; layer.x.to={x_bounds[1]}; layer.x.inc=1;")
         elif is_cat_x and cats:
             x_bounds = (0.4, float(len(cats)) + 0.6)
             gl.set_xlim(x_bounds[0], x_bounds[1])
@@ -1324,39 +2474,190 @@ def _apply_single_axis_layer_style(
             gl.set_xlim(x_bounds[0], x_bounds[1])
 
         if y_ax.limits is not None and not reserve_top_legend_space:
-            gl.set_ylim(float(y_ax.limits[0]), float(y_ax.limits[1]))
             y_bounds = (float(min(y_ax.limits)), float(max(y_ax.limits)))
-        else:
-            gl.set_ylim(y_bounds[0], y_bounds[1])
+        y_from, y_to = (y_bounds[1], y_bounds[0]) if y_ax.invert else (y_bounds[0], y_bounds[1])
+        gl.set_ylim(y_from, y_to)
+        gl.lt_exec(f"layer.y.from={y_from}; layer.y.to={y_to};")
 
-        max_auto_tks = 5 if panel.equal_aspect else 6
+        max_auto_tks = (
+            4
+            if (has_forest or lw_in < 5.9 or (not x_is_log and abs(x_bounds[1] - x_bounds[0]) < 0.5))
+            else (5 if panel.equal_aspect else 6)
+        )
+        eff_x_tks = int(max_x_ticks_override) if max_x_ticks_override is not None else max_auto_tks
         if x_ax.major_step is not None and x_ax.major_step > 0:
             gl.lt_exec(f"layer.x.inc={float(x_ax.major_step)};")
         elif not is_cat_x and not x_is_log and not has_2d_mat:
-            auto_xs = ob.compute_nice_linear_step(x_bounds[0], x_bounds[1], max_ticks=max_auto_tks)
+            auto_xs = ob.compute_nice_linear_step(x_bounds[0], x_bounds[1], max_ticks=eff_x_tks)
             if auto_xs:
                 gl.lt_exec(f"layer.x.inc={auto_xs};")
 
         if y_ax.major_step is not None and y_ax.major_step > 0:
             gl.lt_exec(f"layer.y.inc={float(y_ax.major_step)};")
-        elif y_labels and not y_is_log and not has_2d_mat:
+        elif y_labels and not y_is_log and not has_2d_mat and not is_cat_y:
             auto_ys = ob.compute_nice_linear_step(y_bounds[0], y_bounds[1], max_ticks=max_auto_tks)
             if auto_ys:
                 gl.lt_exec(f"layer.y.inc={auto_ys};")
 
+    _apply_axis_breaks_if_any(gl, panel, x_bounds, y_bounds)
+
     if is_cat_x and cats:
-        ob.render_categorical_x_labels_clean(
-            op,
-            gp,
-            gl,
-            layer_num_1based,
-            cats,
-            xlim_lo=x_bounds[0],
-            xlim_hi=x_bounds[1],
-            tick_label_pt=tk_pt_use,
-            color_int=ink_int,
-            show_outward_ticks=False,
-        )
+        # Compute true glyph visual width (stripping Origin `\-(...)` / `\g(...)` escapes) so 2-to-6 group
+        # labels like `Low Dose`, `High Dose`, `Cluster 1..5`, `*OH`, `O\-(2)` stay crisp and horizontal
+        # without unnecessary 30° tilting into the X-axis title!
+        upi_cat = ob._origin_units_per_inch(spec)
+        slot_w_in = lw_in / max(float(len(cats)), 1.0)
+        vis_lens: List[int] = []
+        vis_ems: List[float] = []
+        for raw_cat in cats:
+            vis_s = re.sub(r"\\[A-Za-z+-]+\(([^()]*)\)", r"\1", str(raw_cat))
+            vis_lens.append(len(vis_s))
+            em_v = sum(
+                0.24
+                if ch in " .,'|!"
+                else (0.31 if ch in "iltfr1()-/" else (0.56 if (ch.isupper() or ch in "%+*=#") else 0.42))
+                for ch in vis_s
+            )
+            vis_ems.append(em_v)
+        max_vis_len = max(vis_lens, default=4)
+        max_em_cat = max(vis_ems, default=2.5)
+        horiz_pt = tk_pt_use
+        # True glyph advance in Origin overlay is ~1.35x `em_v`; keep <=6-char tokens (`*OH`, `O\-(2)`, `S1..S5`)
+        # crisp & horizontal, and render longer labels (`Low Dose`, `Cluster 1`) with tucked 28° tilt clear of `XB`!
+        if max_vis_len <= 6 or (len(cats) <= 4 and max_vis_len <= 7) or (
+            len(cats) <= 6 and ((1.38 * max_em_cat * tk_pt_use) / upi_cat) <= 0.84 * slot_w_in
+        ):
+            ob.activate_layer(op, gp, layer_num_1based)
+            gl.lt_exec("layer.x.showLabels=0; layer.x.ticks=0; layer.x.showMinorTicks=0;")
+            dy_h_pct = ((0.20 + 0.56 * (horiz_pt / upi_cat)) / ph_in) * 100.0
+            x_span_cat = max(x_bounds[1] - x_bounds[0], 1e-6)
+            for idx_c, c_str in enumerate(cats, start=1):
+                xf_c = (float(idx_c) - x_bounds[0]) / x_span_cat
+                ob._PENDING_DATA_TEXT_ITEMS.setdefault(gp.name, []).append(
+                    {
+                        "layer_num": int(layer_num_1based),
+                        "mode": "cat_x_horiz",
+                        "x_frac": xf_c,
+                        "dy_below_pct": dy_h_pct,
+                        "text": str(c_str),
+                        "format_math": False,
+                        "fontsize": horiz_pt,
+                        "color_int": ink_int,
+                        "rotate": 0,
+                        "pos_scatter": 0,
+                    }
+                )
+        else:
+            ob.activate_layer(op, gp, layer_num_1based)
+            gl.lt_exec("layer.x.showLabels=0; layer.x.ticks=0; layer.x.showMinorTicks=0;")
+            tilt_pt = min(tk_pt_use, 20.5 if max_vis_len <= 11 else 19.0)
+            rot_deg = 28
+            rot_rad = math.radians(rot_deg)
+            char_h_in = tilt_pt / upi_cat
+            x_span_cat = max(x_bounds[1] - x_bounds[0], 1e-6)
+            for idx_c, (c_str, v_len) in enumerate(zip(cats, vis_lens), start=1):
+                xf_c = (float(idx_c) - x_bounds[0]) / x_span_cat
+                lbl_len_in = (0.50 * max(v_len, 2) * tilt_pt) / upi_cat
+                dx_tip_pct = ((0.44 * lbl_len_in * math.cos(rot_rad)) / pw_in) * 100.0
+                # Keep >= 5.35% so `flush_page_overlays` classifies layer into `layers_with_cat2` (`bot_in + 1.44 in`),
+                # while tucking top-right tip 0.08 in below bottom spine so bottom-left never touches `XB`!
+                dy_tip_pct = max(
+                    5.35,
+                    ((0.08 + 0.46 * lbl_len_in * math.sin(rot_rad) + 0.46 * char_h_in * math.cos(rot_rad)) / ph_in)
+                    * 100.0,
+                )
+                ob._PENDING_DATA_TEXT_ITEMS.setdefault(gp.name, []).append(
+                    {
+                        "layer_num": int(layer_num_1based),
+                        "mode": "cat_x_tilt",
+                        "x_frac": xf_c,
+                        "dx_shift_pct": -dx_tip_pct + 0.16,
+                        "dy_below_pct": dy_tip_pct,
+                        "text": str(c_str),
+                        "format_math": False,
+                        "fontsize": tilt_pt,
+                        "color_int": ink_int,
+                        "rotate": rot_deg,
+                        "pos_scatter": 0,
+                    }
+                )
+
+    if is_cat_y:
+        y_cats = list(y_ax.categories or [])
+        if not y_cats:
+            for ly in panel.layers:
+                if ly.mark == "forest_ci" and ly.categories:
+                    y_cats = [str(c) for c in ly.categories]
+                    break
+        if y_cats:
+            upi_yc = ob._origin_units_per_inch(spec)
+            max_yc_len = max((len(str(c)) for c in y_cats), default=6)
+            max_yc_em = max(
+                (
+                    sum(
+                        0.28
+                        if ch in " .,'|!"
+                        else (0.35 if ch in "iltfr1()-/" else (0.64 if (ch.isupper() or ch in "%+*=#") else 0.49))
+                        for ch in str(c)
+                    )
+                    for c in y_cats
+                ),
+                default=4.0,
+            )
+            ob.register_custom_y_label_layer(gp, layer_num_1based, extra_gap=(3.6 if max_yc_len >= 12 else 1.8))
+            left_edge_in = pw_in * (eff_rect_pct[0] / 100.0)
+            avail_left_in = max(1.0, left_edge_in - (0.85 if y_ax.label else 0.52))
+            fit_yc_pt = (avail_left_in * upi_yc) / max(max_yc_em * 1.16 + 0.35, 1.0)
+            yc_fs = min(19.5 if len(y_cats) >= 9 else tk_pt_use, max(15.0, fit_yc_pt))
+            y_span_c = max(y_bounds[1] - y_bounds[0], 1e-6)
+            lx_cat_pct = eff_rect_pct[0] - (0.12 / pw_in) * 100.0
+            for i_y, yc_lbl in enumerate(y_cats):
+                yv_pos = float(i_y + 1)
+                frac_top = (yv_pos - y_bounds[0]) / y_span_c if y_ax.invert else (y_bounds[1] - yv_pos) / y_span_c
+                ry_cat_pct = eff_rect_pct[1] + frac_top * eff_rect_pct[3]
+                ob.add_page_text_label(
+                    op,
+                    gp,
+                    gl,
+                    layer_num_1based,
+                    f"ForestY_{i_y+1}",
+                    str(yc_lbl),
+                    lx_cat_pct,
+                    ry_cat_pct,
+                    fontsize=yc_fs,
+                    color_int=ink_int,
+                    pos_scatter=1,
+                    format_math=False,
+                )
+
+            # Right-side formatted `est [low, high]` column inside reserved headroom for `forest_ci`
+            for ly in panel.layers:
+                if ly.mark == "forest_ci" and ly.series:
+                    s_f = ly.series[0]
+                    fmt_cis = s_f.meta.get("formatted_ci") or []
+                    if (ly.show_value_labels or s_f.show_value_labels) and fmt_cis:
+                        ci_fs = min(float(spec["callout_pt"]), 17.5 if len(y_cats) >= 6 else 18.5)
+                        rx_ci_pct = eff_rect_pct[0] + eff_rect_pct[2] - 1.4
+                        for i_ci, ci_txt in enumerate(fmt_cis):
+                            if not ci_txt:
+                                continue
+                            yv_pos = float(i_ci + 1)
+                            frac_top = (yv_pos - y_bounds[0]) / y_span_c if y_ax.invert else (y_bounds[1] - yv_pos) / y_span_c
+                            ry_ci_pct = eff_rect_pct[1] + frac_top * eff_rect_pct[3]
+                            ob.add_page_text_label(
+                                op,
+                                gp,
+                                gl,
+                                layer_num_1based,
+                                f"ForestCI_{i_ci+1}",
+                                str(ci_txt),
+                                rx_ci_pct,
+                                ry_ci_pct,
+                                fontsize=ci_fs,
+                                color_int=ink_int,
+                                pos_scatter=1,
+                                format_math=False,
+                            )
 
     ob.style_origin_native_axis_title(
         gl, "XB", x_ax.label, fontsize=ax_pt_use, color_int=ink_int, op=op, gp=gp, layer_num_1based=layer_num_1based
@@ -2091,6 +3392,8 @@ def _render_contour_2d_page(
 
     if contour_layer.palette_colors:
         stops = list(contour_layer.palette_colors)
+    elif contour_layer.color_scheme and contour_layer.color_scheme in ("vik", "magma", "viridis", "diverging_blue_red", "sequential_blue_red"):
+        stops = list(ot.get_scheme_color_stops(contour_layer.color_scheme))
     elif is_heatmap and ("diverging" in contour_layer.color_scheme or z_lo < -1e-6):
         stops = list(ot.DIVERGING_BLUE_WHITE_RED_STOPS)
     else:
@@ -2481,6 +3784,30 @@ def _render_contour_2d_page(
             format_math=True,
         )
 
+    # Render any non-contour overlay layers on `contour_panel` (e.g. `vector_quiver` velocity arrows or streamlines)
+    ov_layers_2d = [ly for ly in contour_panel.layers if ly.mark not in ("contour_pseudocolor", "matrix_heatmap")]
+    if ov_layers_2d:
+        for ov_ly in ov_layers_2d:
+            _plot_layer_into_glayer(op, gp, gl_c, 1, ov_ly, contour_panel, wb_aux, used_sheets, pal_tmp_dir)
+        ob.activate_layer(op, gp, 1)
+        if side_panel is None:
+            gl_c.lt_exec(
+                f"layer.unit=2; layer.left={sq_left}; layer.top={sq_top}; layer.width={sq_side}; layer.height={sq_side};"
+            )
+        if is_heatmap:
+            gl_c.set_xlim(x1 - 0.5, x2 + 0.5)
+            gl_c.set_ylim(y2 + 0.5, y1 - 0.5)
+        elif has_y_lbls:
+            gl_c.set_xlim(x2 if contour_panel.x_axis.invert else x1, x1 if contour_panel.x_axis.invert else x2)
+            gl_c.set_ylim(y_map_hi, y_map_lo)
+        else:
+            xf_c0, xf_c1 = (x2, x1) if contour_panel.x_axis.invert else (x1, x2)
+            yf_c0, yf_c1 = (y2, y1) if contour_panel.y1_axis.invert else (y1, y2)
+            gl_c.set_xlim(xf_c0, xf_c1)
+            gl_c.set_ylim(yf_c0, yf_c1)
+            gl_c.lt_exec(f"layer.x.from={xf_c0}; layer.x.to={xf_c1}; layer.y.from={yf_c0}; layer.y.to={yf_c1};")
+        gl_c.lt_exec("label -r Legend;")
+
     if contour_panel.guides:
         _render_guides_into_glayer(
             op,
@@ -2498,12 +3825,811 @@ def _render_contour_2d_page(
     return gp
 
 
+def _render_ternary_page(
+    op: Any,
+    panel: cg.PanelSpec,
+    page_lname: str,
+    pal_tmp_dir: Path,
+) -> Any:
+    _ = pal_tmp_dir
+    spec = ob.get_active_spec()
+    pw, ph = float(spec["page_rect_w_in"]), float(spec["page_rect_h_in"])
+    gp = op.new_graph(lname=page_lname, template="Ternary")
+    ob.set_graph_page_inches(gp, pw, ph)
+    gl = gp[0]
+    ob.activate_layer(op, gp, 1)
+
+    scale_min = min(pw / 10.4, ph / 7.8)
+    side_in = round(4.75 * scale_min, 4)
+    left_in = round(0.5 * (pw - side_in), 4)
+    top_in = round(1.30 * (ph / 7.8), 4)
+    gl.lt_exec(f"layer.unit=2; layer.left={left_in}; layer.top={top_in}; layer.width={side_in}; layer.height={side_in};")
+
+    wb = op.new_book("w", lname=f"{page_lname}_Ternary")
+    used_sheets: set[str] = set()
+    all_series: List[cg.SeriesSpec] = [s for ly in panel.layers for s in ly.series]
+    fb_cols = ot.resolve_series_colors(
+        max(1, len(all_series)),
+        scheme=(panel.layers[0].color_scheme if panel.layers else "okabe_ito"),
+    )
+    comp_labels = ["Component A (%)", "Component B (%)", "Component C (%)"]
+    if all_series and all_series[0].meta.get("component_labels"):
+        cl_raw = list(all_series[0].meta["component_labels"])
+        if len(cl_raw) >= 3:
+            comp_labels = [str(cl_raw[0]), str(cl_raw[1]), str(cl_raw[2])]
+    elif panel.meta.get("component_labels") and len(panel.meta["component_labels"]) >= 3:
+        cl_raw = list(panel.meta["component_labels"])
+        comp_labels = [str(cl_raw[0]), str(cl_raw[1]), str(cl_raw[2])]
+
+    plotted_info: List[Tuple[int, Any, cg.SeriesSpec, str]] = []
+    for s_idx, s in enumerate(all_series):
+        a_vals = [float(v) for v in (s.x or [])]
+        b_vals = [float(v) for v in (s.y or [])]
+        c_raw = s.meta.get("ternary_c") or s.meta.get("c") or s.meta.get("z")
+        if c_raw is not None and len(c_raw) == len(a_vals):
+            c_vals = [float(v) for v in c_raw]
+        else:
+            tot_sc = 100.0 if max(a_vals + b_vals, default=1.0) > 1.5 else 1.0
+            c_vals = [max(0.0, tot_sc - av - bv) for av, bv in zip(a_vals, b_vals)]
+        if not a_vals or len(a_vals) != len(b_vals):
+            continue
+
+        sh_nm = ob.unique_origin_short_name(f"Tern_{s_idx+1}", used_sheets, default="Tern")
+        wks = wb[0] if len(used_sheets) == 1 else wb.add_sheet(sh_nm)
+        if len(used_sheets) == 1:
+            wks.name = sh_nm
+        wks.cols = 3
+        wks.from_list(0, a_vals, lname=comp_labels[0], axis="X")
+        wks.from_list(1, b_vals, lname=comp_labels[1], axis="Y")
+        wks.from_list(2, c_vals, lname=comp_labels[2], axis="Z")
+        wks.cols_axis("XYZ")
+
+        ob.activate_layer(op, gp, 1)
+        p_t = gl.add_plot(wks, coly=1, colx=0, colz=2, type=245)
+        p_idx_1 = len(gl.plot_list())
+        c_hex = ot.normalize_hex(s.color or fb_cols[s_idx % len(fb_cols)])
+        plotted_info.append((p_idx_1, p_t, s, c_hex))
+
+    ob.activate_layer(op, gp, 1)
+    try:
+        gl.group(False)
+    except Exception:
+        pass
+
+    leg_entries: List[Tuple[Any, ...]] = []
+    for p_idx_1, _p_t, s, c_hex in plotted_info:
+        c_lt = ot.hex_to_origin_rgb_int(c_hex)
+        ls_raw = str(s.line_style or "none").strip().lower()
+        has_ln = ls_raw not in ("none", "", "false")
+        d_c = _line_style_code(ls_raw)
+        raw_lw = float(s.line_width_pt or spec["curve_lw_pt"])
+        cw_u = int(spec["curve_w_units"]) if abs(raw_lw - 2.8) < 0.4 else max(300, int(round(raw_lw * 500.0)))
+        ms_raw = str(s.marker_style or ("circle" if not has_ln else "none")).strip().lower()
+        m_sh, m_in = _marker_cmd_and_interior(ms_raw)
+        if not has_ln and m_sh is None:
+            m_sh, m_in = 2, 1
+        ln_cmd = f"set rt -l 1; set rt -d {d_c}; set rt -w {cw_u};" if has_ln else "set rt -l 0;"
+        if m_sh is not None:
+            mk_sz = float(s.marker_size_pt or spec["marker_size_pt"])
+            kf_code = 1 if int(m_in) == 2 else 0
+            sym_cmd = f"set rt -k {int(m_sh)}; set rt -kf {kf_code}; set rt -z {mk_sz};"
+        else:
+            sym_cmd = "set rt -z 0;"
+        gl.lt_exec(f"range rt = !{p_idx_1}; set rt -c {c_lt}; set rt -cl {c_lt}; {ln_cmd} {sym_cmd}")
+
+        if not s.meta.get("skip_legend"):
+            if has_ln and m_sh is not None:
+                sw_k = "open_circle" if m_in == 2 else "line_sphere"
+            elif has_ln:
+                sw_k = "line_dashed" if d_c == 1 else "line"
+            else:
+                sw_k = "scatter_open" if m_in == 2 else "scatter"
+            leg_entries.append((p_idx_1, s.name, c_hex, sw_k))
+
+    ob.set_graph_page_inches(gp, pw, ph)
+    ob.activate_layer(op, gp, 1)
+    gl.lt_exec(f"layer.unit=2; layer.left={left_in}; layer.top={top_in}; layer.width={side_in}; layer.height={side_in};")
+
+    bt = float(spec["box_lw_pt"])
+    ink_int = ot.hex_to_origin_rgb_int("#111111")
+    f_id = ob.get_font_id(op)
+    bold_i = int(spec["bold_int"])
+    tk_base = min(float(spec["tick_label_pt"]), 21.0 * (ph / 7.8))
+    comp_tk = ot.compensate_origin_layer_pt(tk_base, side_in, side_in, pw, ph)
+    try:
+        x_to_tern = float(op.po.LT_evaluate("layer.x.to"))
+    except Exception:
+        x_to_tern = 1.0
+    tern_inc = 20 if x_to_tern > 5.0 else 0.2
+
+    sub_ax_cmds: List[str] = ["layer.x.grid.show=0; layer.y.grid.show=0; layer.z.grid.show=0;"]
+    for sax in ("x", "x2", "y", "y2", "z", "z2"):
+        sub_ax_cmds.append(
+            f"layer.{sax}.thickness={bt}; layer.{sax}.color={ink_int}; "
+            f"layer.{sax}.ticks=1; layer.{sax}.showMinorTicks=0; "
+            f"layer.{sax}.label.pt={comp_tk}; layer.{sax}.label.bold={bold_i}; layer.{sax}.label.color={ink_int};"
+        )
+        if f_id > 0:
+            sub_ax_cmds.append(f"layer.{sax}.label.font={f_id};")
+    sub_ax_cmds.append(f"layer.x.inc={tern_inc}; layer.y.inc={tern_inc}; layer.z.inc={tern_inc};")
+    sub_ax_cmds.append("XB.show=0; YL.show=0; ZB.show=0; ZF.show=0; XT.show=0; YR.show=0; label -r Legend;")
+    gl.lt_exec(" ".join(sub_ax_cmds))
+    for go in list(gl.obj.GraphObjects):
+        if getattr(go, "Name", "") in ("Legend", "BBUTN1", "XB", "YL", "ZB", "ZF", "XT", "YR"):
+            try:
+                go.Destroy()
+            except Exception:
+                pass
+
+    try:
+        u_t = int(round(float(op.po.LT_evaluate("layer.unit"))))
+        ll_v = float(op.po.LT_evaluate("layer.left"))
+        lt_v = float(op.po.LT_evaluate("layer.top"))
+        lw_v = float(op.po.LT_evaluate("layer.width"))
+        lh_v = float(op.po.LT_evaluate("layer.height"))
+        if u_t == 2:
+            ll_in, lt_in, lw_in, lh_in = ll_v, lt_v, lw_v, lh_v
+        else:
+            ll_in, lt_in, lw_in, lh_in = pw * ll_v / 100.0, ph * lt_v / 100.0, pw * lw_v / 100.0, ph * lh_v / 100.0
+    except Exception:
+        ll_in, lt_in, lw_in, lh_in = left_in, top_in, side_in, side_in * 0.866025
+
+    ax_fs = min(float(spec["axis_title_pt"]), 24.5 * (ph / 7.8))
+    d_edge = 0.84 * (ph / 7.8)
+    d_bot = 0.86 * (ph / 7.8)
+    # Left slanted edge (`X` = comp_labels[0]), Right slanted edge (`Y` = comp_labels[1]), Bottom edge (`Z` = comp_labels[2])
+    lx_in = ll_in + 0.25 * lw_in - 0.866025 * d_edge
+    ly_in = lt_in + 0.50 * lh_in - 0.500000 * d_edge
+    rx_in = ll_in + 0.75 * lw_in + 0.866025 * d_edge
+    ry_in = lt_in + 0.50 * lh_in - 0.500000 * d_edge
+    bx_in = ll_in + 0.50 * lw_in
+    by_in = min(ph - 0.34 * (ph / 7.8), lt_in + lh_in + d_bot)
+
+    ob.add_page_text_label(
+        op, gp, gl, 1, "TernLeft", comp_labels[0], (lx_in / pw) * 100.0, (ly_in / ph) * 100.0,
+        fontsize=ax_fs, color_int=ink_int, rotate=60, pos_scatter=0, format_math=True,
+    )
+    ob.add_page_text_label(
+        op, gp, gl, 1, "TernRight", comp_labels[1], (rx_in / pw) * 100.0, (ry_in / ph) * 100.0,
+        fontsize=ax_fs, color_int=ink_int, rotate=300, pos_scatter=0, format_math=True,
+    )
+    ob.add_page_text_label(
+        op, gp, gl, 1, "TernBottom", comp_labels[2], (bx_in / pw) * 100.0, (by_in / ph) * 100.0,
+        fontsize=ax_fs, color_int=ink_int, rotate=0, pos_scatter=0, format_math=True,
+    )
+
+    if panel.legend_style != "none" and leg_entries:
+        ob.configure_custom_legend(
+            gl,
+            leg_entries,
+            fontsize=min(float(spec["legend_pt"]), 19.5 * (ph / 7.8)),
+            horizontal=False,
+            pos_mode="page_upper_right",
+            layer_rect_pct=(62.5, 3.8, 34.5, 25.0),
+            op=op,
+            gp=gp,
+            layer_num_1based=1,
+        )
+    return gp
+
+
+def _compute_polygon_vertical_band(
+    poly_x: Sequence[float],
+    poly_y: Sequence[float],
+    n_grid: int = 160,
+) -> Tuple[List[float], List[float], List[float]]:
+    px = [float(v) for v in poly_x]
+    py = [float(v) for v in poly_y]
+    if len(px) < 3:
+        return [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]
+    if abs(px[0] - px[-1]) > 1e-9 or abs(py[0] - py[-1]) > 1e-9:
+        px.append(px[0])
+        py.append(py[0])
+    xmin, xmax = min(px), max(px)
+    if xmax - xmin <= 1e-9:
+        return [xmin, xmax], [min(py), min(py)], [max(py), max(py)]
+    xg = np.linspace(xmin + 1e-6, xmax - 1e-6, n_grid)
+    y_up: List[float] = []
+    y_lo: List[float] = []
+    n_seg = len(px) - 1
+    for xv in xg:
+        hits: List[float] = []
+        for i in range(n_seg):
+            x0, y0, x1, y1 = px[i], py[i], px[i + 1], py[i + 1]
+            if (x0 <= xv <= x1) or (x1 <= xv <= x0):
+                if abs(x1 - x0) < 1e-12:
+                    hits.extend([y0, y1])
+                else:
+                    t = (xv - x0) / (x1 - x0)
+                    hits.append(y0 + t * (y1 - y0))
+        if hits:
+            y_lo.append(float(min(hits)))
+            y_up.append(float(max(hits)))
+        else:
+            y_lo.append(0.0)
+            y_up.append(0.0)
+    return xg.tolist(), y_up, y_lo
+
+
+def _render_polar_radar_page(
+    op: Any,
+    panel: cg.PanelSpec,
+    page_lname: str,
+    pal_tmp_dir: Path,
+) -> Any:
+    _ = pal_tmp_dir
+    spec = ob.get_active_spec()
+    pw, ph = float(spec["page_rect_w_in"]), float(spec["page_rect_h_in"])
+    coord_mode = str(getattr(panel, "coord", "polar") or "polar").strip().lower()
+    if coord_mode not in ("polar", "radar"):
+        has_cats = bool(panel.x_axis.categories or any(ly.categories for ly in panel.layers))
+        coord_mode = "radar" if has_cats else "polar"
+
+    all_series: List[cg.SeriesSpec] = [s for ly in panel.layers for s in ly.series]
+    fb_cols = ot.resolve_series_colors(
+        max(1, len(all_series)),
+        scheme=(panel.layers[0].color_scheme if panel.layers else "okabe_ito"),
+    )
+    ink_int = ot.hex_to_origin_rgb_int("#111111")
+    bt = float(spec["box_lw_pt"])
+    bold_i = int(spec["bold_int"])
+    f_id = ob.get_font_id(op)
+
+    if coord_mode == "polar":
+        gp = op.new_graph(lname=page_lname, template="Polar")
+        ob.set_graph_page_inches(gp, pw, ph)
+        gl = gp[0]
+        ob.activate_layer(op, gp, 1)
+        for go in list(gl.obj.GraphObjects):
+            gnm = getattr(go, "Name", "")
+            if gnm in ("BBUTN1", "Legend", "YL", "XB", "XT", "YR", "label") or "BUTN" in gnm.upper():
+                try:
+                    go.Destroy()
+                except Exception:
+                    pass
+
+        wb = op.new_book("w", lname=f"{page_lname}_Polar")
+        used_sheets: set[str] = set()
+        plotted_pol: List[Tuple[int, Any, cg.SeriesSpec, str]] = []
+        all_r_vals: List[float] = []
+
+        for s_idx, s in enumerate(all_series):
+            th_vals = [float(v) for v in (s.x or s.meta.get("theta") or [])]
+            r_vals = [float(v) for v in (s.y or s.meta.get("r") or [])]
+            if not th_vals or len(th_vals) != len(r_vals):
+                continue
+            all_r_vals.extend(r_vals)
+            sh_nm = ob.unique_origin_short_name(f"Pol_{s_idx+1}", used_sheets, default="Pol")
+            wks = wb[0] if len(used_sheets) == 1 else wb.add_sheet(sh_nm)
+            if len(used_sheets) == 1:
+                wks.name = sh_nm
+            wks.cols = 2
+            wks.from_list(0, th_vals, lname="Theta_deg", axis="X")
+            wks.from_list(1, r_vals, lname=s.name, axis="Y")
+            wks.cols_axis("XY")
+
+            ob.activate_layer(op, gp, 1)
+            p_p = gl.add_plot(wks, coly=1, colx=0, type=192)
+            p_idx_1 = len(gl.plot_list())
+            c_hex = ot.normalize_hex(s.color or fb_cols[s_idx % len(fb_cols)])
+            plotted_pol.append((p_idx_1, p_p, s, c_hex))
+
+        ob.activate_layer(op, gp, 1)
+        try:
+            gl.group(False)
+        except Exception:
+            pass
+
+        leg_entries: List[Tuple[Any, ...]] = []
+        for p_idx_1, _p_p, s, c_hex in plotted_pol:
+            c_lt = ot.hex_to_origin_rgb_int(c_hex)
+            ls_raw = str(s.line_style or "solid").strip().lower()
+            has_ln = ls_raw not in ("none", "", "false")
+            d_c = _line_style_code(ls_raw)
+            raw_lw = float(s.line_width_pt or spec["curve_lw_pt"])
+            cw_u = int(spec["curve_w_units"]) if abs(raw_lw - 2.8) < 0.4 else max(300, int(round(raw_lw * 500.0)))
+            m_sh, m_in = _marker_cmd_and_interior(s.marker_style)
+            if not has_ln and m_sh is None:
+                m_sh, m_in = 2, 1
+            ln_cmd = f"set rp -l 1; set rp -d {d_c}; set rp -w {cw_u};" if has_ln else "set rp -l 0;"
+            if m_sh is not None:
+                mk_sz = float(s.marker_size_pt or spec["marker_size_pt"])
+                kf_code = 1 if int(m_in) == 2 else 0
+                sym_cmd = f"set rp -k {int(m_sh)}; set rp -kf {kf_code}; set rp -z {mk_sz};"
+            else:
+                sym_cmd = "set rp -z 0;"
+            gl.lt_exec(f"range rp = !{p_idx_1}; set rp -c {c_lt}; set rp -cl {c_lt}; {ln_cmd} {sym_cmd}")
+
+            if not s.meta.get("skip_legend"):
+                sw_k = (
+                    ("open_circle" if m_in == 2 else "line_sphere")
+                    if (has_ln and m_sh is not None)
+                    else (("line_dashed" if d_c == 1 else "line") if has_ln else "scatter")
+                )
+                leg_entries.append((p_idx_1, s.name, c_hex, sw_k))
+
+        scale_min = min(pw / 10.4, ph / 7.8)
+        side_in = round(4.45 * scale_min, 4)
+        left_in = round(0.5 * (pw - side_in), 4)
+        top_in = round(0.96 * (ph / 7.8), 4)
+        ob.set_graph_page_inches(gp, pw, ph)
+        ob.activate_layer(op, gp, 1)
+
+        if panel.y1_axis.limits is not None:
+            r_lo, r_max = float(panel.y1_axis.limits[0]), float(panel.y1_axis.limits[1])
+            r_step = panel.y1_axis.major_step or ob.compute_nice_linear_step(r_lo, r_max, max_ticks=4) or ((r_max - r_lo) / 3.0)
+        else:
+            r_lo = min(0.0, min(all_r_vals, default=0.0))
+            raw_hi = max(all_r_vals, default=1.0)
+            if raw_hi <= r_lo:
+                raw_hi = r_lo + 1.0
+            r_step = panel.y1_axis.major_step or ob.compute_nice_linear_step(r_lo, raw_hi * 1.08, max_ticks=4) or ((raw_hi - r_lo) / 3.0)
+            r_max = math.ceil((raw_hi * 1.06) / r_step) * r_step if r_lo == 0.0 else (raw_hi + 0.08 * (raw_hi - r_lo))
+
+        tk_base = min(float(spec["tick_label_pt"]), 20.5 * (ph / 7.8))
+        comp_tk = ot.compensate_origin_layer_pt(tk_base, side_in, side_in, pw, ph)
+        f_cmd = (
+            f"layer.x.label.font={f_id}; layer.x2.label.font={f_id}; "
+            f"layer.y.label.font={f_id}; layer.y2.label.font={f_id}; "
+            if f_id > 0
+            else ""
+        )
+
+        gl.lt_exec(
+            f"layer.unit=2; layer.left={left_in}; layer.top={top_in}; layer.width={side_in}; layer.height={side_in}; "
+            f"layer.x.from=0; layer.x.to=360; layer.x.inc=45; layer.x2.inc=45; "
+            f"layer.x.thickness={bt}; layer.x2.thickness={bt}; layer.x.color={ink_int}; layer.x2.color={ink_int}; "
+            f"layer.x.label.pt={comp_tk}; layer.x2.label.pt={comp_tk}; "
+            f"layer.x.label.bold={bold_i}; layer.x2.label.bold={bold_i}; "
+            f"layer.x.label.color={ink_int}; layer.x2.label.color={ink_int}; "
+            f"layer.y.from={r_lo}; layer.y.to={r_max}; layer.y.inc={r_step}; "
+            f"layer.y.showAxes=0; layer.y.ticks=0; layer.y.showLabels=0; "
+            f"layer.y2.showAxes=0; layer.y2.ticks=0; layer.y2.showLabels=0; "
+            f"layer.y.grid.show=1; layer.x.grid.show=1; "
+            f"{f_cmd}"
+            f"XB.show=0; YL.show=0; XT.show=0; YR.show=0; label -r Legend;"
+        )
+        for go in list(gl.obj.GraphObjects):
+            gnm = getattr(go, "Name", "")
+            if gnm in ("BBUTN1", "Legend", "YL", "XB", "XT", "YR", "label") or "BUTN" in gnm.upper():
+                try:
+                    go.Destroy()
+                except Exception:
+                    pass
+
+        if panel.y1_axis.label:
+            ob.add_page_text_label(
+                op, gp, gl, 1, "PolarRadialTitle", panel.y1_axis.label,
+                50.0, 91.5,
+                fontsize=min(float(spec["axis_title_pt"]), 24.0 * (ph / 7.8)),
+                color_int=ink_int, pos_scatter=0, format_math=True,
+            )
+
+        if panel.legend_style != "none" and leg_entries:
+            ob.configure_custom_legend(
+                gl,
+                leg_entries,
+                fontsize=min(float(spec["legend_pt"]), 19.5 * (ph / 7.8)),
+                horizontal=False,
+                pos_mode="page_upper_right",
+                layer_rect_pct=(63.5, 3.8, 33.5, 24.0),
+                op=op,
+                gp=gp,
+                layer_num_1based=1,
+            )
+        return gp
+
+    # Cartesian Equal-Aspect Radar Web (`panel.coord == "radar"`)
+    gp = op.new_graph(lname=page_lname)
+    ob.set_graph_page_inches(gp, pw, ph)
+    gl = gp[0]
+    ob.activate_layer(op, gp, 1)
+
+    scale_min = min(pw / 10.4, ph / 7.8)
+    side_in = round(4.80 * scale_min, 4)
+    left_in = round(0.5 * (pw - side_in) - 0.20 * (pw / 10.4), 4)
+    top_in = round(1.22 * (ph / 7.8), 4)
+    rect_rad_pct = ot.rect_in_to_page_pct(left_in, top_in, side_in, side_in, pw, ph)
+
+    cats = list(
+        panel.x_axis.categories
+        or next((ly.categories for ly in panel.layers if ly.categories), None)
+        or ([str(v) for v in all_series[0].x] if (all_series and all_series[0].x) else ["Dim 1", "Dim 2", "Dim 3", "Dim 4", "Dim 5"])
+    )
+    n_spokes = max(3, len(cats))
+    thetas = [math.pi / 2.0 - 2.0 * math.pi * k / float(n_spokes) for k in range(n_spokes)]
+
+    all_y_rad = [float(v) for s in all_series for v in (s.y or []) if isinstance(v, (int, float))]
+    if panel.y1_axis.limits is not None:
+        r_min_v, r_max_v = float(panel.y1_axis.limits[0]), float(panel.y1_axis.limits[1])
+    elif all_y_rad and max(all_y_rad) > 1.05:
+        r_min_v = 0.0
+        r_max_v = 100.0 if max(all_y_rad) <= 100.0 else math.ceil(max(all_y_rad) / 10.0) * 10.0
+    else:
+        r_min_v, r_max_v = 0.0, 1.0
+    r_span_v = max(r_max_v - r_min_v, 1e-9)
+
+    wb = op.new_book("w", lname=f"{page_lname}_Radar")
+    wks_web = wb[0]
+    wks_web.name = "RadarWeb"
+    web_cols: List[Tuple[str, str, List[float]]] = []
+    ring_fracs = (0.25, 0.50, 0.75, 1.00)
+    for rf_i, rf in enumerate(ring_fracs, start=1):
+        rx_l = [rf * math.cos(th) for th in thetas] + [rf * math.cos(thetas[0])]
+        ry_l = [rf * math.sin(th) for th in thetas] + [rf * math.sin(thetas[0])]
+        web_cols.append(("X", f"Ring{rf_i}_X", rx_l))
+        web_cols.append(("Y", f"Ring{rf_i}_Y", ry_l))
+    for sp_k, th in enumerate(thetas, start=1):
+        web_cols.append(("X", f"Spoke{sp_k}_X", [0.0, math.cos(th)]))
+        web_cols.append(("Y", f"Spoke{sp_k}_Y", [0.0, math.sin(th)]))
+
+    wks_web.cols = len(web_cols)
+    for ci, (ax_r, c_nm, c_vs) in enumerate(web_cols):
+        wks_web.from_list(ci, c_vs, lname=c_nm, axis=ax_r)
+    wks_web.cols_axis("".join(c[0] for c in web_cols))
+
+    grid_oc = ob._hex_to_origin_color(op, "#CBD5E1")
+    outer_oc = ob._hex_to_origin_color(op, "#94A3B8")
+    grid_w = max(350, int(round(0.65 * float(spec["sub_w_units"]))))
+    outer_w = max(550, int(spec["sub_w_units"]))
+    for seg_i in range(len(web_cols) // 2):
+        p_w = gl.add_plot(wks_web, coly=2 * seg_i + 1, colx=2 * seg_i, type="l")
+        is_outer = seg_i == 3
+        p_w.color = outer_oc if is_outer else grid_oc
+        p_idx_w = len(gl.plot_list())
+        gl.lt_exec(f"range rw = !{p_idx_w}; set rw -w {outer_w if is_outer else grid_w}; set rw -d 0;")
+
+    # Model polygons: subtle translucent interior fill + crisp closed stroke & 2D circle vertices
+    wks_mod = wb.add_sheet("Models")
+    mod_cols: List[Tuple[str, str, List[float]]] = []
+    mod_plan: List[Dict[str, Any]] = []
+    for s_idx, s in enumerate(all_series):
+        yv_s = [float(v) for v in (s.y or [])]
+        if len(yv_s) < n_spokes:
+            continue
+        r_norms = [max(0.0, min(1.05, (yv_s[k] - r_min_v) / r_span_v)) for k in range(n_spokes)]
+        px_l = [r_norms[k] * math.cos(thetas[k]) for k in range(n_spokes)] + [r_norms[0] * math.cos(thetas[0])]
+        py_l = [r_norms[k] * math.sin(thetas[k]) for k in range(n_spokes)] + [r_norms[0] * math.sin(thetas[0])]
+        xg_b, yup_b, ylo_b = _compute_polygon_vertical_band(px_l, py_l, n_grid=140)
+        c_hex = ot.normalize_hex(s.color or fb_cols[s_idx % len(fb_cols)])
+        c_bx = len(mod_cols)
+        mod_cols.append(("X", f"M{s_idx+1}_BX", xg_b))
+        mod_cols.append(("Y", f"M{s_idx+1}_BUp", yup_b))
+        mod_cols.append(("Y", f"M{s_idx+1}_BLo", ylo_b))
+        c_px = len(mod_cols)
+        mod_cols.append(("X", f"M{s_idx+1}_PX", px_l))
+        mod_cols.append(("Y", s.name, py_l))
+        mod_plan.append({"name": s.name, "c_hex": c_hex, "bx": c_bx, "bup": c_bx + 1, "blo": c_bx + 2, "px": c_px, "py": c_px + 1, "s": s})
+
+    if mod_cols:
+        wks_mod.cols = len(mod_cols)
+        for ci, (ax_r, c_nm, c_vs) in enumerate(mod_cols):
+            wks_mod.from_list(ci, c_vs, lname=c_nm, axis=ax_r)
+        wks_mod.cols_axis("".join(c[0] for c in mod_cols))
+
+    for mp in mod_plan:
+        fill_oc = ob._hex_to_origin_color(op, mp["c_hex"])
+        p_up = gl.add_plot(wks_mod, coly=int(mp["bup"]), colx=int(mp["bx"]), type="l")
+        up_i = len(gl.plot_list())
+        p_lo = gl.add_plot(wks_mod, coly=int(mp["blo"]), colx=int(mp["bx"]), type="l")
+        lo_i = len(gl.plot_list())
+        p_up.color = fill_oc
+        p_lo.color = fill_oc
+        p_up.set_fill_area(above=fill_oc, type=9, below=fill_oc)
+        p_up.transparency = 84
+        p_lo.transparency = 100
+        gl.lt_exec(f"range rup = !{up_i}; set rup -w 0; range rlo = !{lo_i}; set rlo -w 0;")
+
+    leg_entries_rad: List[Tuple[Any, ...]] = []
+    cw_rad = int(spec["curve_w_units"])
+    mk_sz_rad = float(spec["marker_size_pt"]) * 0.92
+    for mp in mod_plan:
+        s_m: cg.SeriesSpec = mp["s"]
+        c_oc = ob._hex_to_origin_color(op, mp["c_hex"])
+        p_poly = gl.add_plot(wks_mod, coly=int(mp["py"]), colx=int(mp["px"]), type="y")
+        m_i = len(gl.plot_list())
+        p_poly.color = c_oc
+        d_c = _line_style_code(s_m.line_style)
+        gl.lt_exec(f"range rmp = !{m_i}; set rmp -w {cw_rad}; set rmp -d {d_c};")
+        p_poly.symbol_kind = 2
+        p_poly.symbol_interior = 0
+        p_poly.symbol_size = mk_sz_rad
+        if not s_m.meta.get("skip_legend"):
+            leg_entries_rad.append((m_i, mp["name"], mp["c_hex"], "line_sphere"))
+
+    ob.activate_layer(op, gp, 1)
+    gl.lt_exec(
+        f"layer.unit=2; layer.left={left_in}; layer.top={top_in}; layer.width={side_in}; layer.height={side_in}; "
+        "layer.x.showAxes=0; layer.y.showAxes=0; layer.x.showLabels=0; layer.y.showLabels=0; "
+        "layer.x.ticks=0; layer.y.ticks=0; layer.x2.ticks=0; layer.y2.ticks=0; "
+        "layer.x.grid.show=0; layer.y.grid.show=0; "
+        "XB.show=0; YL.show=0; YR.show=0; XT.show=0; label -r Legend;"
+    )
+    gl.set_xlim(-1.35, 1.35)
+    gl.set_ylim(-1.35, 1.35)
+    gl.lt_exec("layer.x.from=-1.35; layer.x.to=1.35; layer.y.from=-1.35; layer.y.to=1.35;")
+
+    # Subtle radial scale labels along top spoke + crisp spoke category labels around radius 1.18
+    slate_int = ot.hex_to_origin_rgb_int("#64748B")
+    ring_fs = max(5.5, float(spec["tick_label_pt"]) * 0.64)
+    for rf in (0.50, 1.00):
+        rv_val = r_min_v + rf * r_span_v
+        rv_txt = f"{int(round(rv_val))}" if r_max_v >= 10.0 else f"{rv_val:.2g}"
+        xf_r = (0.04 - (-1.35)) / 2.70
+        yf_r = (1.35 - rf) / 2.70
+        ob.add_page_text_label(
+            op, gp, gl, 1, f"RadTick_{rf}", rv_txt,
+            rect_rad_pct[0] + xf_r * rect_rad_pct[2],
+            rect_rad_pct[1] + yf_r * rect_rad_pct[3],
+            fontsize=ring_fs, color_int=slate_int, pos_scatter=2, format_math=False,
+        )
+
+    spoke_fs = min(float(spec["tick_label_pt"]) * 0.90, 21.0 * (ph / 7.8))
+    r_lbl = 1.16
+    for k_sp, (cat_nm, th) in enumerate(zip(cats, thetas)):
+        cx_sp = r_lbl * math.cos(th)
+        cy_sp = r_lbl * math.sin(th)
+        xf_s = (cx_sp - (-1.35)) / 2.70
+        yf_s = (1.35 - cy_sp) / 2.70
+        xp_s = rect_rad_pct[0] + xf_s * rect_rad_pct[2]
+        yp_s = rect_rad_pct[1] + yf_s * rect_rad_pct[3]
+        if math.cos(th) > 0.22:
+            pos_sc_s = 2
+        elif math.cos(th) < -0.22:
+            pos_sc_s = 1
+        else:
+            pos_sc_s = 0
+            yp_s += -1.0 if math.sin(th) > 0 else 1.2
+        ob.add_page_text_label(
+            op, gp, gl, 1, f"RadarSpoke_{k_sp+1}", str(cat_nm),
+            xp_s, yp_s, fontsize=spoke_fs, color_int=ink_int, pos_scatter=pos_sc_s, format_math=False,
+        )
+
+    if panel.legend_style != "none" and leg_entries_rad:
+        ob.configure_custom_legend(
+            gl,
+            leg_entries_rad,
+            fontsize=min(float(spec["legend_pt"]), 19.0 * (ph / 7.8)),
+            horizontal=False,
+            pos_mode="page_upper_right",
+            layer_rect_pct=(64.0, 3.5, 33.5, 24.0),
+            op=op,
+            gp=gp,
+            layer_num_1based=1,
+        )
+    return gp
+
+
+def _render_multi_track_page(
+    op: Any,
+    fig_spec: cg.FigureSpec,
+    page_lname: str,
+    pal_tmp_dir: Path,
+) -> Any:
+    spec = ob.get_active_spec()
+    pw, ph = float(spec["page_rect_w_in"]), float(spec["page_rect_h_in"])
+    sx, sy = pw / 10.40, ph / 7.80
+
+    gp = op.new_graph(lname=page_lname)
+    ob.set_graph_page_inches(gp, pw, ph)
+    wb = op.new_book("w", lname=f"{page_lname}_Tracks")
+    used_sheets: set[str] = set()
+
+    tracks = fig_spec.panels
+    K = max(1, len(tracks))
+    total_left = 1.90 * sx
+    total_right = 9.85 * sx
+    gap_in = (0.26 if K >= 5 else 0.34) * sx
+    top_in = 1.05 * sy
+    h_in = 4.85 * sy
+    track_w_in = max(0.35 * sx, ((total_right - total_left) - gap_in * max(0, K - 1)) / float(K))
+
+    # Resolve shared depth/vertical `(y_lo, y_hi)` across all K tracks
+    all_ys_t: List[float] = []
+    for p_t in tracks:
+        if p_t.y1_axis.limits is not None:
+            all_ys_t.extend([float(p_t.y1_axis.limits[0]), float(p_t.y1_axis.limits[1])])
+        for ly_t in p_t.layers:
+            for s_t in ly_t.series:
+                all_ys_t.extend([float(v) for v in (s_t.y or []) if isinstance(v, (int, float))])
+    y_lo_sh = min(all_ys_t) if all_ys_t else 0.0
+    y_hi_sh = max(all_ys_t) if all_ys_t else 100.0
+    if y_hi_sh <= y_lo_sh:
+        y_hi_sh = y_lo_sh + 1.0
+
+    horizons = tracks[0].meta.get("horizons") or fig_spec.meta.get("horizons") or []
+    upi_mt = ob._origin_units_per_inch(spec)
+    tk_pt_mt = min(float(spec["tick_label_pt"]), 18.5 * sy)
+    yl_pt_mt = float(spec["axis_title_pt"])
+    track_layout_records: List[Tuple[int, Any, cg.PanelSpec, Tuple[float, float, float, float], Tuple[float, float]]] = []
+
+    for idx_t, pnl in enumerate(tracks):
+        cur_lay = idx_t + 1
+        gl_t = gp[0] if idx_t == 0 else gp.add_layer(0)
+        ob.activate_layer(op, gp, cur_lay)
+        left_i = round(total_left + idx_t * (track_w_in + gap_in), 4)
+        box_t_in = (left_i, round(top_in, 4), round(track_w_in, 4), round(h_in, 4))
+        rect_t_pct = ot.rect_in_to_page_pct(*box_t_in, pw, ph)
+        pnl.y1_axis.limits = (y_lo_sh, y_hi_sh)
+
+        # Infer X bounds ahead so cross-track horizon bands span the full track width cleanly beneath data!
+        xb_pre, _ = _infer_panel_xy_bounds(pnl, y_axis_filter="y1")
+        if horizons:
+            hz_sh = ob.unique_origin_short_name(f"HzT{cur_lay}", used_sheets, default="Hz")
+            wks_hz = wb[0] if len(used_sheets) == 1 else wb.add_sheet(hz_sh)
+            if len(used_sheets) == 1:
+                wks_hz.name = hz_sh
+            hz_cols: List[Tuple[str, str, List[float]]] = []
+            hz_colors: List[str] = []
+            for h_i, hz in enumerate(horizons):
+                if not isinstance(hz, dict):
+                    continue
+                d0 = float(hz.get("depth_start", hz.get("start", y_lo_sh)))
+                d1 = float(hz.get("depth_end", hz.get("end", y_hi_sh)))
+                hz_cols.append(("X", f"HX{h_i+1}", [xb_pre[0] - 0.5 * (xb_pre[1] - xb_pre[0]), xb_pre[1] + 0.5 * (xb_pre[1] - xb_pre[0])]))
+                hz_cols.append(("Y", f"HU{h_i+1}", [d0, d0]))
+                hz_cols.append(("Y", f"HL{h_i+1}", [d1, d1]))
+                hz_colors.append(str(hz.get("color") or "#DCEAFB"))
+            if hz_cols:
+                wks_hz.cols = len(hz_cols)
+                for ci, (ax_r, c_nm, c_vs) in enumerate(hz_cols):
+                    wks_hz.from_list(ci, c_vs, lname=c_nm, axis=ax_r)
+                wks_hz.cols_axis("".join(c[0] for c in hz_cols))
+                for h_i, hc_hex in enumerate(hz_colors):
+                    hz_oc = ob._hex_to_origin_color(op, ot.normalize_hex(hc_hex))
+                    p_hu = gl_t.add_plot(wks_hz, coly=3 * h_i + 1, colx=3 * h_i, type="l")
+                    hu_idx = len(gl_t.plot_list())
+                    p_hl = gl_t.add_plot(wks_hz, coly=3 * h_i + 2, colx=3 * h_i, type="l")
+                    hl_idx = len(gl_t.plot_list())
+                    p_hu.color = hz_oc
+                    p_hl.color = hz_oc
+                    p_hu.set_fill_area(above=hz_oc, type=9, below=hz_oc)
+                    p_hu.transparency = 48
+                    p_hl.transparency = 100
+                    bdr_hz_oc = ot.hex_to_origin_rgb_int("#94A3B8")
+                    gl_t.lt_exec(
+                        f"range rhu = !{hu_idx}; set rhu -c {bdr_hz_oc}; set rhu -w 400; set rhu -d 1; "
+                        f"range rhl = !{hl_idx}; set rhl -c {bdr_hz_oc}; set rhl -w 400; set rhl -d 1;"
+                    )
+
+        for ly_t in pnl.layers:
+            _plot_layer_into_glayer(op, gp, gl_t, cur_lay, ly_t, pnl, wb, used_sheets, pal_tmp_dir)
+
+        vis_xb = re.sub(r"\\[A-Za-z+-]+\(([^()]*)\)", r"\1", str(pnl.x_axis.label or ""))
+        max_xb_fit = ((track_w_in + 0.24 * sx) * upi_mt) / (0.55 * max(len(vis_xb), 4))
+        xb_pt_track = min(float(spec["axis_title_pt"]), 20.5 * sy, max(6.0 if ph < 4.8 else 14.5, max_xb_fit))
+
+        x_b, y_b = _apply_single_axis_layer_style(
+            op,
+            gp,
+            gl_t,
+            cur_lay,
+            pnl,
+            rect_pct=rect_t_pct,
+            rect_in=box_t_in,
+            axis_title_pt=(yl_pt_mt if idx_t == 0 else xb_pt_track),
+            tick_label_pt=tk_pt_mt,
+            hide_y_override=(idx_t > 0),
+            max_x_ticks_override=3,
+        )
+        if idx_t == 0 and xb_pt_track < yl_pt_mt:
+            ob.style_origin_native_axis_title(
+                gl_t, "XB", pnl.x_axis.label, fontsize=xb_pt_track,
+                color_int=ot.hex_to_origin_rgb_int(pnl.y1_axis.color or "#111111"),
+                op=op, gp=gp, layer_num_1based=1,
+            )
+        if idx_t > 0:
+            ob.activate_layer(op, gp, cur_lay)
+            gl_t.lt_exec("layer.y.ticks=1; layer.y.showLabels=0;")
+
+        # Re-lock shared Y & track X bounds after horizon bands
+        ob.activate_layer(op, gp, cur_lay)
+        xf0_t, xf1_t = (x_b[1], x_b[0]) if pnl.x_axis.invert else (x_b[0], x_b[1])
+        yf0_t, yf1_t = (y_lo_sh, y_hi_sh) if not pnl.y1_axis.invert else (y_hi_sh, y_lo_sh)
+        gl_t.set_xlim(xf0_t, xf1_t)
+        gl_t.set_ylim(yf0_t, yf1_t)
+        gl_t.lt_exec(f"layer.x.from={xf0_t}; layer.x.to={xf1_t}; layer.y.from={yf0_t}; layer.y.to={yf1_t}; label -r Legend;")
+
+        if pnl.guides:
+            _render_guides_into_glayer(
+                op, gp, gl_t, cur_lay, pnl.guides, wb, used_sheets, x_b, y_b,
+                rect_pct=rect_t_pct, invert_x=pnl.x_axis.invert, invert_y=pnl.y1_axis.invert,
+                log_x=(pnl.x_axis.scale == "log10"), log_y=(pnl.y1_axis.scale == "log10"),
+            )
+
+        # Track header label above top spine
+        hdr_txt = str(pnl.meta.get("track_name") or pnl.tag or "")
+        if hdr_txt:
+            y_hdr_t = ((top_in - 0.36 * sy) / ph) * 100.0
+            c_hdr_hex = pnl.layers[0].series[0].color if (pnl.layers and pnl.layers[0].series and pnl.layers[0].series[0].color) else "#111111"
+            ob.add_page_text_label(
+                op, gp, gl_t, cur_lay, f"TrackHdr_{cur_lay}", hdr_txt,
+                rect_t_pct[0] + 0.5 * rect_t_pct[2], max(2.2, y_hdr_t),
+                fontsize=min(xb_pt_track, 19.5 * sy),
+                color_int=ot.hex_to_origin_rgb_int(c_hdr_hex),
+                pos_scatter=0, format_math=True,
+            )
+
+        track_layout_records.append((cur_lay, gl_t, pnl, rect_t_pct, x_b))
+
+    # Render cross-track horizon labels on whichever track & side (`left`/`right`) maximizes curve clearance!
+    if horizons and track_layout_records:
+        hz_fs = min(float(spec["callout_pt"]), 15.0 * sy)
+        hz_ink = ot.hex_to_origin_rgb_int("#334155")
+        for h_i, hz in enumerate(horizons):
+            if not isinstance(hz, dict) or not hz.get("label"):
+                continue
+            d_s = float(hz.get("depth_start", hz.get("start", y_lo_sh)))
+            d_e = float(hz.get("depth_end", hz.get("end", y_hi_sh)))
+            d_lo_h, d_hi_h = min(d_s, d_e), max(d_s, d_e)
+            d_mid = 0.5 * (d_lo_h + d_hi_h)
+            d_pad = 0.04 * (y_hi_sh - y_lo_sh)
+
+            best_cand: Optional[Tuple[float, int, Any, Tuple[float, float, float, float], str, cg.PanelSpec]] = None
+            for t_idx_0, (c_lay, gl_cand, pnl_cand, r_pct_cand, xb_cand) in enumerate(track_layout_records):
+                xfs_band: List[float] = []
+                for ly_c in pnl_cand.layers:
+                    for s_c in ly_c.series:
+                        xs_c = list(s_c.x or [])
+                        ys_c = list(s_c.y or [])
+                        for k_pt in range(len(ys_c)):
+                            xv_c, yv_c = xs_c[k_pt], ys_c[k_pt]
+                            if isinstance(xv_c, (int, float)) and isinstance(yv_c, (int, float)):
+                                if (d_lo_h - d_pad) <= float(yv_c) <= (d_hi_h + d_pad):
+                                    xfs_band.append(
+                                        ob._map_data_to_frac(float(xv_c), xb_cand[0], xb_cand[1], pnl_cand.x_axis.invert, pnl_cand.x_axis.scale == "log10")
+                                    )
+                        # Also interpolate segment crossings at d_mid so sparse profiles are accurately scored
+                        for k_pt in range(len(ys_c) - 1):
+                            y0_c, y1_c = float(ys_c[k_pt]), float(ys_c[k_pt + 1])
+                            if (y0_c <= d_mid <= y1_c) or (y1_c <= d_mid <= y0_c):
+                                t_int = 0.5 if abs(y1_c - y0_c) < 1e-9 else (d_mid - y0_c) / (y1_c - y0_c)
+                                x_int = float(xs_c[k_pt]) + t_int * (float(xs_c[k_pt + 1]) - float(xs_c[k_pt]))
+                                xfs_band.append(
+                                    ob._map_data_to_frac(x_int, xb_cand[0], xb_cand[1], pnl_cand.x_axis.invert, pnl_cand.x_axis.scale == "log10")
+                                )
+                left_clear = min(xfs_band) if xfs_band else 0.85
+                right_clear = min(1.0 - v for v in xfs_band) if xfs_band else 0.85
+                tie_bonus = 0.03 * (t_idx_0 / max(1, K - 1))
+                for side_nm, clr_v in (("right", right_clear), ("left", left_clear)):
+                    score_c = clr_v + tie_bonus
+                    if best_cand is None or score_c > best_cand[0]:
+                        best_cand = (score_c, c_lay, gl_cand, r_pct_cand, side_nm, pnl_cand)
+
+            if best_cand is not None:
+                _sc, chosen_lay, chosen_gl, chosen_rpct, chosen_side, chosen_pnl = best_cand
+                frac_top_h = (
+                    (d_mid - y_lo_sh) / max(y_hi_sh - y_lo_sh, 1e-6)
+                    if chosen_pnl.y1_axis.invert
+                    else (y_hi_sh - d_mid) / max(y_hi_sh - y_lo_sh, 1e-6)
+                )
+                yp_hz = chosen_rpct[1] + frac_top_h * chosen_rpct[3]
+                if chosen_side == "right":
+                    xp_hz = chosen_rpct[0] + chosen_rpct[2] - 0.75
+                    pos_hz = 1
+                else:
+                    xp_hz = chosen_rpct[0] + 0.75
+                    pos_hz = 2
+                ob.add_page_text_label(
+                    op, gp, chosen_gl, chosen_lay, f"HzLbl_{h_i+1}", str(hz["label"]),
+                    xp_hz, yp_hz, fontsize=hz_fs, color_int=hz_ink, pos_scatter=pos_hz, format_math=False,
+                )
+
+    return gp
+
+
 def _render_single_panel_page(
     op: Any,
     panel: cg.PanelSpec,
     page_lname: str,
     pal_tmp_dir: Path,
 ) -> Any:
+    coord_mode = str(getattr(panel, "coord", "cartesian") or "cartesian").strip().lower()
+    if coord_mode == "ternary" or any(ly.mark == "ternary_scatter" for ly in panel.layers):
+        return _render_ternary_page(op, panel, page_lname, pal_tmp_dir)
+    if coord_mode in ("polar", "radar") or any(ly.mark == "polar_line" for ly in panel.layers):
+        return _render_polar_radar_page(op, panel, page_lname, pal_tmp_dir)
+
     if panel.y2_axis is not None and any(ly.y_axis == "y2" for ly in panel.layers):
         return _render_dual_y_panel_page(op, panel, page_lname, pal_tmp_dir)
 
@@ -2516,12 +4642,71 @@ def _render_single_panel_page(
     gp = op.new_graph(lname=page_lname, template=tpl) if tpl else op.new_graph(lname=page_lname)
 
     pw, ph = float(spec["page_rect_w_in"]), float(spec["page_rect_h_in"])
-    box_in = (
-        float(spec["box_rect_left_in"]),
-        float(spec["box_rect_top_in"]),
-        float(spec["box_rect_w_in"]),
-        float(spec["box_rect_h_in"]),
+    sy_pg = ph / 7.80
+    at_risk_tbl = panel.meta.get("at_risk_table") if isinstance(panel.meta.get("at_risk_table"), dict) else None
+    has_at_risk = bool(at_risk_tbl and at_risk_tbl.get("times") and at_risk_tbl.get("rows"))
+    linked_top = getattr(panel.x_axis, "linked_top", None)
+    has_linked_top = isinstance(linked_top, dict) and bool(linked_top.get("formula"))
+
+    if has_at_risk and at_risk_tbl is not None:
+        t_ar_list = [float(v) for v in at_risk_tbl["times"]]
+        if len(t_ar_list) >= 2 and panel.x_axis.major_step is None:
+            dt_ar = round(t_ar_list[1] - t_ar_list[0], 8)
+            if dt_ar > 0:
+                panel.x_axis.major_step = dt_ar
+        if panel.x_axis.limits is None and t_ar_list:
+            max_data_t = max(
+                (max((float(v) for v in (s.x or [0.0])), default=0.0) for ly in panel.layers for s in ly.series),
+                default=t_ar_list[-1],
+            )
+            x_lo_ar = min(0.0, min(t_ar_list))
+            x_hi_ar = max(max(t_ar_list), max_data_t)
+            panel.x_axis.limits = (x_lo_ar, x_hi_ar + 0.025 * max(x_hi_ar - x_lo_ar, 1.0))
+
+    forest_max_y_len = max(
+        (
+            max((len(str(c)) for c in (panel.y1_axis.categories or ly.categories or [])), default=0)
+            for ly in panel.layers
+            if ly.mark == "forest_ci"
+        ),
+        default=0,
     )
+    if has_at_risk and at_risk_tbl is not None:
+        max_arm_ch_pre = max((len(str(r.get("name", ""))) for r in at_risk_tbl.get("rows", [])), default=8)
+        sx_pg = pw / 10.40
+        base_l = float(spec["box_rect_left_in"])
+        base_w = float(spec["box_rect_w_in"])
+        left_ar = max(base_l, min(2.68 * sx_pg, (0.62 + 0.125 * max_arm_ch_pre) * sx_pg))
+        w_ar = max(4.20 * sx_pg, base_l + base_w - left_ar)
+        box_in = (
+            round(left_ar, 4),
+            round(0.72 * sy_pg, 4),
+            round(w_ar, 4),
+            round(3.65 * sy_pg, 4),
+        )
+    elif has_linked_top:
+        box_in = (
+            float(spec["box_rect_left_in"]),
+            round(1.52 * sy_pg, 4),
+            float(spec["box_rect_w_in"]),
+            round(4.28 * sy_pg, 4),
+        )
+    elif forest_max_y_len >= 12 and pw >= 6.0:
+        left_f = min(3.15, max(2.55, 0.55 + 0.13 * forest_max_y_len))
+        w_f = max(5.40, 8.55 - left_f)
+        box_in = (
+            round(left_f, 3),
+            float(spec["box_rect_top_in"]),
+            round(w_f, 3),
+            float(spec["box_rect_h_in"]),
+        )
+    else:
+        box_in = (
+            float(spec["box_rect_left_in"]),
+            float(spec["box_rect_top_in"]),
+            float(spec["box_rect_w_in"]),
+            float(spec["box_rect_h_in"]),
+        )
     ob.set_graph_page_inches(gp, pw, ph)
     rect_for_leg = ot.rect_in_to_page_pct(*box_in, pw, ph)
 
@@ -2533,14 +4718,18 @@ def _render_single_panel_page(
     for ly in panel.layers:
         all_leg.extend(_plot_layer_into_glayer(op, gp, gl, 1, ly, panel, wb, used_sheets, pal_tmp_dir))
 
+    # Re-assert canvas inches after plotting (some Origin statistical templates reset page dimensions)
+    ob.set_graph_page_inches(gp, pw, ph)
+
     has_stacked_100 = any(ly.mark == "bar_stacked_100pct" for ly in panel.layers if ly.y_axis == "y1")
     has_stacked = any(ly.mark in ("bar_stacked", "bar_stacked_100pct") for ly in panel.layers)
-    has_stat = any(ly.mark in ("stat_distribution", "stat_box_jitter") for ly in panel.layers)
+    has_stat = any(ly.mark in ("stat_distribution", "stat_box_jitter", "violin_box") for ly in panel.layers)
+    has_volcano = any(ly.layer_id == "volcano_main" for ly in panel.layers) or bool(panel.meta.get("point_callouts"))
     has_dense_guides = sum(1 for g in panel.guides if g.kind in ("hline", "span_v")) >= 3
     n_leg = len(all_leg)
     want_leg = (panel.legend_style != "none") and bool(all_leg)
     use_interior_top_leg = (
-        (has_stacked or (has_stat and n_leg <= 7) or (has_dense_guides and n_leg <= 4 and not panel.insets))
+        (has_stacked or has_volcano or (has_stat and n_leg <= 7) or (has_dense_guides and n_leg <= 4 and not panel.insets))
         and want_leg
     )
 
@@ -2586,10 +4775,98 @@ def _render_single_panel_page(
             used_sheets,
             x_bounds,
             y_bounds,
+            rect_pct=rect_for_leg,
             invert_x=panel.x_axis.invert,
+            invert_y=panel.y1_axis.invert,
             log_x=(panel.x_axis.scale == "log10"),
             log_y=(panel.y1_axis.scale == "log10"),
         )
+
+    pt_callouts = panel.meta.get("point_callouts")
+    if isinstance(pt_callouts, list) and pt_callouts:
+        _render_point_callouts_into_glayer(
+            op,
+            gp,
+            gl,
+            1,
+            pt_callouts,
+            wb,
+            used_sheets,
+            x_bounds,
+            y_bounds,
+            rect_for_leg,
+            invert_x=panel.x_axis.invert,
+            log_x=(panel.x_axis.scale == "log10"),
+            log_y=(panel.y1_axis.scale == "log10"),
+            top_reserved_pct=(8.5 if use_interior_top_leg else 4.2),
+        )
+
+    # Re-lock exact axis bounds after guide/leader `add_plot` calls (prevents ViolinBox / template auto-rescale drift!)
+    if not has_stacked_100:
+        ob.activate_layer(op, gp, 1)
+        xf0, xf1 = (x_bounds[1], x_bounds[0]) if panel.x_axis.invert else (x_bounds[0], x_bounds[1])
+        yf0, yf1 = (y_bounds[1], y_bounds[0]) if panel.y1_axis.invert else (y_bounds[0], y_bounds[1])
+        gl.set_xlim(xf0, xf1)
+        gl.set_ylim(yf0, yf1)
+        gl.lt_exec(f"layer.x.from={xf0}; layer.x.to={xf1}; layer.y.from={yf0}; layer.y.to={yf1};")
+        _apply_axis_breaks_if_any(gl, panel, x_bounds, y_bounds)
+
+    # Nonlinear Formula-Linked Top X Axis (`panel.x_axis.linked_top`)
+    if has_linked_top and isinstance(linked_top, dict):
+        ob.activate_layer(op, gp, 1)
+        gl.lt_exec("layer.x.showAxes=1; layer.y.showAxes=3;")
+        raw_formula = str(linked_top.get("formula") or "1239.84193/x").strip()
+        expr_x1 = re.sub(r"\b[xX]\b", "X1", raw_formula)
+        expr_x2 = re.sub(r"\b[xX]\b", "X2", raw_formula)
+        gp.activate()
+        op.lt_exec(
+            f"layadd userdef:=1 bottom:=0 top:=1 left:=0 right:=0 linkto:=1 xaxis:=custom x1:={expr_x1} x2:={expr_x2};"
+        )
+        lay_tx_num = int(gp.obj.Layers.Count)
+        gl_tx = gp[lay_tx_num - 1]
+        ob.activate_layer(op, gp, lay_tx_num)
+        bt_tx = float(spec["box_lw_pt"])
+        ink_tx = ot.hex_to_origin_rgb_int(panel.y1_axis.color or "#111111")
+        fid_tx = ob.get_font_id(op)
+        bold_tx = int(spec["bold_int"])
+        comp_tk_tx = ot.compensate_origin_layer_pt(float(spec["tick_label_pt"]), box_in[2], box_in[3], pw, ph)
+        f_tx_clause = f"layer.x.label.font={fid_tx}; layer.x2.label.font={fid_tx}; " if fid_tx > 0 else ""
+        gl_tx.lt_exec(
+            f"layer.x.grid.show=0; layer.y.grid.show=0; "
+            f"layer.x.thickness={bt_tx}; layer.x2.thickness={bt_tx}; "
+            f"layer.x.color={ink_tx}; layer.x2.color={ink_tx}; "
+            f"layer.x.ticks=1; layer.x2.ticks=1; "
+            f"layer.x.showMinorTicks=0; layer.x2.showMinorTicks=0; "
+            f"layer.x.maxTicks=5; layer.x2.maxTicks=5; "
+            f"{f_tx_clause}"
+            f"layer.x.label.pt={comp_tk_tx}; layer.x2.label.pt={comp_tk_tx}; "
+            f"layer.x.label.bold={bold_tx}; layer.x2.label.bold={bold_tx}; "
+            f"layer.x.label.color={ink_tx}; layer.x2.label.color={ink_tx}; "
+            f"XB.show=0; XT.show=0; YL.show=0; YR.show=0; label -r Legend;"
+        )
+        try:
+            xf0_cur = (x_bounds[1] if panel.x_axis.invert else x_bounds[0])
+            xf1_cur = (x_bounds[0] if panel.x_axis.invert else x_bounds[1])
+            tx1 = _eval_axis_formula(raw_formula, xf0_cur)
+            tx2 = _eval_axis_formula(raw_formula, xf1_cur)
+            auto_tx_step = linked_top.get("major_step") or ob.compute_nice_linear_step(min(tx1, tx2), max(tx1, tx2), max_ticks=5)
+            if auto_tx_step and float(auto_tx_step) > 0:
+                gl_tx.lt_exec(f"layer.x.inc={float(auto_tx_step)}; layer.x2.inc={float(auto_tx_step)};")
+        except Exception:
+            pass
+        top_lbl = str(linked_top.get("label") or "").strip()
+        if top_lbl:
+            ob.style_origin_native_axis_title(
+                gl_tx,
+                "XT",
+                top_lbl,
+                fontsize=float(spec["axis_title_pt"]),
+                color_int=ink_tx,
+                op=op,
+                gp=gp,
+                layer_num_1based=lay_tx_num,
+            )
+        ob.activate_layer(op, gp, 1)
 
     if panel.insets:
         _render_insets_for_panel(op, gp, gl, 1, panel, wb, used_sheets, pal_tmp_dir, x_bounds, y_bounds)
@@ -2597,14 +4874,16 @@ def _render_single_panel_page(
             _draw_zoom_connectors(op, gp, gl, 1, panel, panel.insets, x_bounds, y_bounds, wb, used_sheets)
 
     # Configure main layer custom legend STRICTLY INSIDE plot box!
+    chosen_leg_corner = "corner_upper_right"
     if not want_leg:
         ob.activate_layer(op, gp, 1)
         gl.lt_exec("label -r Legend;")
     elif use_interior_top_leg:
+        chosen_leg_corner = "interior_top"
         ob.configure_custom_legend(
             gl,
             all_leg,
-            fontsize=(20.0 if n_leg >= 5 else float(spec["legend_pt"])),
+            fontsize=(20.0 if n_leg >= 5 and ph >= 4.8 else float(spec["legend_pt"])),
             horizontal=True,
             pos_mode="interior_top",
             layer_rect_pct=rect_for_leg,
@@ -2614,16 +4893,93 @@ def _render_single_panel_page(
         )
     else:
         pos_m = _pick_cleanest_legend_corner(panel, x_bounds, y_bounds)
+        chosen_leg_corner = pos_m
         ob.configure_custom_legend(
             gl,
             all_leg,
-            fontsize=(19.5 if n_leg >= 6 else float(spec["legend_pt"])),
+            fontsize=(19.5 if n_leg >= 6 and ph >= 4.8 else float(spec["legend_pt"])),
             pos_mode=pos_m,
             layer_rect_pct=rect_for_leg,
             op=op,
             gp=gp,
             layer_num_1based=1,
         )
+
+    # Kaplan-Meier Aligned `Number at risk` Table + `Log-rank p / HR` Summary Block
+    if has_at_risk and at_risk_tbl is not None:
+        ink_ar = ot.hex_to_origin_rgb_int("#111111")
+        times_ar = [float(t) for t in at_risk_tbl["times"]]
+        rows_ar = list(at_risk_tbl["rows"])
+        n_arms_ar = max(1, len(rows_ar))
+        arm_color_lookup = {
+            str(s.name): ot.normalize_hex(s.color or "#111111")
+            for ly in panel.layers
+            for s in ly.series
+        }
+        fb_ar_cols = [ot.normalize_hex(ent[2]) for ent in all_leg] if all_leg else ["#2B6CB0", "#D84B5C", "#2F855A"]
+        hdr_fs = min(float(spec["callout_pt"]), 18.5 * sy_pg)
+        cnt_fs = min(float(spec["tick_label_pt"]) * 0.80, 18.5 * sy_pg)
+        max_arm_ch = max((len(str(r.get("name", ""))) for r in rows_ar), default=8)
+        upi_ar = ob._origin_units_per_inch(spec)
+        avail_arm_w_in = max(0.55 * (pw / 10.4), pw * ((rect_for_leg[0] - 5.4) / 100.0))
+        fit_arm_fs = (avail_arm_w_in * upi_ar) / max(0.54 * max_arm_ch, 1.0)
+        arm_lbl_fs = min(cnt_fs * 0.86, 15.0 * sy_pg, max(5.5 if ph < 4.8 else 12.0, fit_arm_fs))
+
+        lx_hdr_pct = max(2.2, rect_for_leg[0] - min(rect_for_leg[0] - 2.2, (0.54 * max_arm_ch * arm_lbl_fs / upi_ar / pw) * 100.0 + 3.2))
+        y_hdr_pct = ((5.72 * sy_pg) / ph) * 100.0
+        ob.add_page_text_label(
+            op, gp, gl, 1, "AtRiskHdr", "Number at risk",
+            lx_hdr_pct, y_hdr_pct, fontsize=hdr_fs, color_int=ink_ar, pos_scatter=2, format_math=False,
+        )
+        row_dy_in = min(0.44, 1.24 / float(n_arms_ar))
+        x_span_ar = max(x_bounds[1] - x_bounds[0], 1e-6)
+        for r_idx, r_dict in enumerate(rows_ar):
+            arm_nm = str(r_dict.get("name", f"Arm {r_idx+1}"))
+            arm_hex = ot.normalize_hex(str(r_dict.get("color") or arm_color_lookup.get(arm_nm, fb_ar_cols[r_idx % len(fb_ar_cols)])))
+            arm_int = ot.hex_to_origin_rgb_int(arm_hex)
+            y_row_pct = (((6.18 + r_idx * row_dy_in) * sy_pg) / ph) * 100.0
+            ob.add_page_text_label(
+                op, gp, gl, 1, f"AtRiskArm_{r_idx+1}", arm_nm,
+                rect_for_leg[0] - 3.2, y_row_pct, fontsize=arm_lbl_fs, color_int=arm_int, pos_scatter=1, format_math=False,
+            )
+            for t_idx, (t_val, c_val) in enumerate(zip(times_ar, r_dict.get("counts", []))):
+                xf_t = (t_val - x_bounds[0]) / x_span_ar
+                if -0.02 <= xf_t <= 1.02:
+                    xp_cnt = rect_for_leg[0] + xf_t * rect_for_leg[2]
+                    ob.add_page_text_label(
+                        op, gp, gl, 1, f"AtRiskCnt_{r_idx+1}_{t_idx+1}", f"{int(c_val)}",
+                        xp_cnt, y_row_pct, fontsize=cnt_fs, color_int=ink_ar, pos_scatter=0, format_math=False,
+                    )
+
+    km_sum_lines = panel.meta.get("km_summary_lines")
+    if isinstance(km_sum_lines, list) and km_sum_lines:
+        sum_fs = min(float(spec["callout_pt"]) * 0.86, 17.5 * sy_pg)
+        sum_ink = ot.hex_to_origin_rgb_int("#1E293B")
+        line_dy_pct = max(3.6, (0.36 * sy_pg / ph) * 100.0)
+        # Check lower-left occupancy (`fx < 0.46, fy < 0.36`): KM curves start at `(0, 1.0)` top-left, so lower-left is almost always pristine!
+        ll_hits = 0
+        for ly_k in panel.layers:
+            for s_k in ly_k.series:
+                for xv_k, yv_k in zip(s_k.x or [], s_k.y or []):
+                    if isinstance(xv_k, (int, float)) and isinstance(yv_k, (int, float)):
+                        fx_k = ob._map_data_to_frac(float(xv_k), x_bounds[0], x_bounds[1], panel.x_axis.invert, False)
+                        fy_k = ob._map_data_to_frac(float(yv_k), y_bounds[0], y_bounds[1], False, False)
+                        if fx_k < 0.46 and fy_k < 0.34:
+                            ll_hits += 1
+        if ll_hits == 0 and chosen_leg_corner != "corner_lower_left":
+            sx_pct = rect_for_leg[0] + 2.4
+            sy0_pct = rect_for_leg[1] + rect_for_leg[3] - (len(km_sum_lines) - 1) * line_dy_pct - 4.4
+            pos_km = 2
+        else:
+            sx_pct = rect_for_leg[0] + rect_for_leg[2] - 2.2
+            leg_offset_pct = (len(all_leg) * 4.8 + 5.5) if chosen_leg_corner == "corner_upper_right" else 4.5
+            sy0_pct = rect_for_leg[1] + leg_offset_pct
+            pos_km = 1
+        for k_li, k_txt in enumerate(km_sum_lines):
+            ob.add_page_text_label(
+                op, gp, gl, 1, f"KMSum_{k_li+1}", _format_origin_guide_text(str(k_txt)),
+                sx_pct, sy0_pct + k_li * line_dy_pct, fontsize=sum_fs, color_int=sum_ink, pos_scatter=pos_km, format_math=False,
+            )
 
     return gp
 
@@ -2727,6 +5083,25 @@ def _render_multi_panel_composite_page(
                 used_sheets,
                 x_b,
                 y_b,
+                rect_pct=rect,
+                invert_x=panel.x_axis.invert,
+                invert_y=panel.y1_axis.invert,
+                log_x=(panel.x_axis.scale == "log10"),
+                log_y=(panel.y1_axis.scale == "log10"),
+            )
+        pt_call_sub = panel.meta.get("point_callouts")
+        if isinstance(pt_call_sub, list) and pt_call_sub:
+            _render_point_callouts_into_glayer(
+                op,
+                gp,
+                gl_p,
+                cur_lay_num,
+                pt_call_sub,
+                wb,
+                used_sheets,
+                x_b,
+                y_b,
+                rect,
                 invert_x=panel.x_axis.invert,
                 log_x=(panel.x_axis.scale == "log10"),
                 log_y=(panel.y1_axis.scale == "log10"),
@@ -2751,7 +5126,15 @@ def _render_multi_panel_composite_page(
             )
 
         tag_raw = panel.tag or chr(ord("a") + p_idx)
-        tag_txt = tag_raw if tag_raw.startswith("(") else f"({tag_raw})"
+        tag_case = str(ob.get_active_spec().get("panel_tag_case", "paren_lower")).lower()
+        if tag_raw.startswith("("):
+            tag_txt = tag_raw
+        elif tag_case == "lower_bold":
+            tag_txt = tag_raw.lower()
+        elif tag_case == "upper_bold":
+            tag_txt = tag_raw.upper()
+        else:
+            tag_txt = f"({tag_raw})"
         ob.add_page_text_label(
             op,
             gp,
@@ -2847,8 +5230,10 @@ def _render_xy_fit_and_band_page(
     pal_tmp_dir: Path,
 ) -> Any:
     """
-    Mode 20: `xy_fit_and_band`
-    Exact Family A 4:3 (`9.20 x 6.90 in`, `6.00 x 4.50 in` box) + pastel 95% CI band + 2D `-k 2` circles + in-box legend & equation.
+    Mode 20+: `xy_fit_and_band` & `dose_response_4pl`
+    Supports >= 1 series (including multi-compound 4PL sigmoid curves on `log10` X axis),
+    rendering each series' pure 2D circle scatter (`symbol_kind=2, symbol_interior=0`),
+    smooth fit curve (`type='l'`), `type=9` 95% CI band, `IC50` drop-line guides, and clean equation/`IC50`/`R²` callouts.
     """
     spec = ob.get_active_spec()
     pw, ph = float(spec["page_rect_w_in"]), float(spec["page_rect_h_in"])
@@ -2867,6 +5252,8 @@ def _render_xy_fit_and_band_page(
     used_sheets: set[str] = set()
     gl = gp[0]
 
+    curve_fits = panel.meta.get("curve_fits") if isinstance(panel.meta.get("curve_fits"), list) else []
+    n_fit_groups = len(curve_fits)
     eq_text = str(panel.meta.get("regression_equation") or panel.meta.get("equation_str") or "").strip()
     r2_val = panel.meta.get("r_squared", panel.meta.get("r2", ""))
 
@@ -2887,10 +5274,22 @@ def _render_xy_fit_and_band_page(
             if r2_val == "" and s.meta.get("r2") is not None:
                 r2_val = s.meta["r2"]
 
-    all_leg: List[Tuple[Any, ...]] = []
+    raw_leg: List[Tuple[Any, ...]] = []
     for ly in panel.layers:
-        all_leg.extend(_plot_layer_into_glayer(op, gp, gl, 1, ly, panel, wb, used_sheets, pal_tmp_dir))
+        raw_leg.extend(_plot_layer_into_glayer(op, gp, gl, 1, ly, panel, wb, used_sheets, pal_tmp_dir))
 
+    # For multi-series curve comparison (>= 2 groups, e.g. Compound 1 vs Compound 2), merge scatter + fit into 1 crisp `line_sphere` swatch per group
+    if n_fit_groups >= 2:
+        all_leg: List[Tuple[Any, ...]] = []
+        for cf in curve_fits:
+            cf_nm = str(cf.get("name", "Series"))
+            cf_col = ot.normalize_hex(str(cf.get("color", "#3E86DE")))
+            match_idx = next((ent[0] for ent in raw_leg if cf_nm in str(ent[1])), raw_leg[0][0] if raw_leg else 1)
+            all_leg.append((match_idx, cf_nm, cf_col, "line_sphere"))
+    else:
+        all_leg = raw_leg
+
+    is_4pl = any(isinstance(cf, dict) and cf.get("model") == "dose_response_4pl" for cf in curve_fits)
     x_bounds, y_bounds = _apply_single_axis_layer_style(
         op,
         gp,
@@ -2901,13 +5300,31 @@ def _render_xy_fit_and_band_page(
         rect_in=box_in,
         axis_title_pt=float(spec["axis_title_pt"]),
         tick_label_pt=float(spec["tick_label_pt"]),
-        reserve_top_legend_space=True,
+        reserve_top_legend_space=(not is_4pl),
     )
+    if is_4pl and panel.y1_axis.limits is None:
+        # Clean 0..115% (or min..max*1.12) bounds for 4PL sigmoid curves so upper 100% plateau has neat room without jumping to 140%
+        y_hi_4pl = max(108.0, min(118.0, y_bounds[1])) if (y_bounds[1] >= 95.0 and y_bounds[0] >= -15.0) else y_bounds[1]
+        y_lo_4pl = min(0.0, y_bounds[0]) if y_bounds[0] >= -5.0 else y_bounds[0]
+        y_bounds = (y_lo_4pl, y_hi_4pl)
+        gl.set_ylim(y_lo_4pl, y_hi_4pl)
+        st_4pl = 20.0 if (y_hi_4pl - y_lo_4pl) >= 85.0 else (ob.compute_nice_linear_step(y_lo_4pl, y_hi_4pl, max_ticks=6) or 20.0)
+        gl.lt_exec(f"layer.y.from={y_lo_4pl}; layer.y.to={y_hi_4pl}; layer.y.inc={st_4pl};")
 
     if panel.guides:
         _render_guides_into_glayer(
-            op, gp, gl, 1, panel.guides, wb, used_sheets, x_bounds, y_bounds,
+            op,
+            gp,
+            gl,
+            1,
+            panel.guides,
+            wb,
+            used_sheets,
+            x_bounds,
+            y_bounds,
+            rect_pct=rect_use,
             invert_x=panel.x_axis.invert,
+            invert_y=panel.y1_axis.invert,
             log_x=(panel.x_axis.scale == "log10"),
             log_y=(panel.y1_axis.scale == "log10"),
         )
@@ -2915,14 +5332,45 @@ def _render_xy_fit_and_band_page(
     leg_corner = _pick_cleanest_legend_corner(panel, x_bounds, y_bounds)
     if panel.legend_style != "none" and all_leg:
         ob.configure_custom_legend(
-            gl, all_leg, fontsize=float(spec["legend_pt"]), horizontal=False, pos_mode=leg_corner,
-            layer_rect_pct=rect_use, op=op, gp=gp, layer_num_1based=1,
+            gl,
+            all_leg,
+            fontsize=float(spec["legend_pt"]),
+            horizontal=False,
+            pos_mode=leg_corner,
+            layer_rect_pct=rect_use,
+            op=op,
+            gp=gp,
+            layer_num_1based=1,
         )
     else:
         ob.activate_layer(op, gp, 1)
         gl.lt_exec("label -r Legend;")
 
-    if eq_text or r2_val != "":
+    # Build clean annotation lines (per-compound IC50 + R^2 for multi-series 4PL, or single equation + R^2)
+    ann_lines: List[str] = []
+    x_unit_match = re.search(r"\(([^()]+)\)\s*$", str(panel.x_axis.label or ""))
+    x_unit_tok = (panel.x_axis.unit or (x_unit_match.group(1) if x_unit_match else "")).strip()
+
+    if is_4pl and curve_fits:
+        if n_fit_groups >= 2:
+            ann_lines.append("4PL IC\\-(50):")
+        for cf in curve_fits:
+            km = cf.get("key_metrics") or {}
+            if "IC50" not in km:
+                continue
+            ic_v = float(km["IC50"])
+            ic_s = f"{ic_v:.3g}"
+            u_sfx = f" {x_unit_tok}" if x_unit_tok and len(x_unit_tok) <= 6 else ""
+            r2_c = float(cf.get("r2", 0.0))
+            if n_fit_groups >= 2:
+                ann_lines.append(f"{cf['name']}: {ic_s}{u_sfx}")
+            else:
+                ann_lines.append(f"IC\\-(50) = {ic_s}{u_sfx},  \\i(R)\\+(2) = {r2_c:.3f}")
+    elif n_fit_groups >= 2:
+        for cf in curve_fits[:3]:
+            r2_c = float(cf.get("r2", 0.0))
+            ann_lines.append(f"{cf['name']}: \\i(R)\\+(2) = {r2_c:.4f}")
+    elif eq_text or r2_val != "":
         eq_clean = eq_text.replace("R²", "\\i(R)\\+(2)").replace("×", "\\g(\\xD7)")
         eq_clean = re.sub(r"\s*\*\s*(?=[xX]\b)", " ", eq_clean)
         eq_clean = re.sub(r"\s*\*\s*", lambda _: " \\g(\\xD7) ", eq_clean)
@@ -2932,29 +5380,90 @@ def _render_xy_fit_and_band_page(
         eq_clean = re.sub(r"\bx\b", lambda _: "\\i(x)", eq_clean)
         r2_str = f"{float(r2_val):.4f}" if isinstance(r2_val, (int, float)) else str(r2_val)
         if eq_clean and ("R\\+(2)" in eq_clean or "R^2" in eq_clean):
-            full_ann = eq_clean
+            ann_lines.append(eq_clean)
         elif eq_clean and r2_str:
-            full_ann = f"{eq_clean},  \\i(R)\\+(2) = {r2_str}"
+            ann_lines.append(f"{eq_clean},  \\i(R)\\+(2) = {r2_str}")
         else:
-            full_ann = eq_clean or f"\\i(R)\\+(2) = {r2_str}"
+            ann_lines.append(eq_clean or f"\\i(R)\\+(2) = {r2_str}")
 
+    if ann_lines:
         l_p, t_p, w_p, h_p = rect_use
-        eq_fs = min(float(spec["callout_pt"]), 20.5 if len(full_ann) >= 28 else float(spec["callout_pt"]))
-        # Place equation cleanly below the 2-item in-box legend if in upper corner, or above if in lower corner
+        max_line_len = max(len(ln) for ln in ann_lines)
+        eq_fs = min(float(spec["callout_pt"]), 18.0 if (len(ann_lines) >= 2 or max_line_len >= 26) else float(spec["callout_pt"]))
         n_leg_rows = len(all_leg) if (panel.legend_style != "none" and all_leg) else 0
-        row_h_pct = max(5.4, float(spec["legend_pt"]) * 0.265)
-        if leg_corner == "corner_upper_right":
-            eq_x, eq_y, eq_align = l_p + w_p - 2.4, t_p + 5.2 + n_leg_rows * row_h_pct + 1.4, 1
+        row_h_pct = max(5.2, float(spec["legend_pt"]) * 0.255)
+        line_step_pct = max(4.5, eq_fs * 0.235)
+
+        # For 4PL sigmoid curves with legend at upper-right, place multi-line IC50 readout in the open lower-left quadrant
+        # below the 50% dashed line and left of the first IC50 drop-line so text NEVER crosses the sigmoid curves!
+        ann_corner = leg_corner
+        min_ic_xf = 0.5
+        if is_4pl and leg_corner == "corner_upper_right" and len(ann_lines) >= 2:
+            ic_xs = [
+                float(g.value)
+                for g in panel.guides
+                if g.kind == "vline" and g.value is not None and g.meta.get("guide_role") == "ic50_drop"
+            ]
+            min_ic_xf = (
+                min(ob._map_data_to_frac(xv, x_bounds[0], x_bounds[1], panel.x_axis.invert, panel.x_axis.scale == "log10") for xv in ic_xs)
+                if ic_xs
+                else 0.5
+            )
+            if min_ic_xf >= 0.34:
+                ann_corner = "corner_lower_left_standalone"
+
+        if ann_corner == "corner_lower_left_standalone":
+            eq_x = l_p + 1.8
+            avail_w_pct = max(8.0, min_ic_xf * w_p - 3.6)
+            upi_ann = ob._origin_units_per_inch(spec)
+            max_vis_ann = max(
+                len(re.sub(r"\\[A-Za-z+-]+\(([^()]*)\)", r"\1", str(ln_s))) for ln_s in ann_lines
+            )
+            est_w_pct = ((0.57 * max_vis_ann + 0.35) * eq_fs / (pw * upi_ann)) * 100.0
+            if est_w_pct > avail_w_pct:
+                eq_fs = max(13.0, eq_fs * (avail_w_pct / est_w_pct))
+                line_step_pct = max(3.6, eq_fs * 0.235)
+            base_y = t_p + h_p - len(ann_lines) * line_step_pct - 2.2
+            eq_align = 2
+        elif leg_corner == "corner_upper_right":
+            eq_x, base_y, eq_align = l_p + w_p - 2.3, t_p + 5.0 + n_leg_rows * row_h_pct + 1.3, 1
         elif leg_corner == "corner_lower_right":
-            eq_x, eq_y, eq_align = l_p + w_p - 2.4, max(t_p + 5.2, t_p + h_p - max(0, n_leg_rows) * row_h_pct - 6.6), 1
+            eq_x, base_y, eq_align = (
+                l_p + w_p - 2.3,
+                max(t_p + 5.0, t_p + h_p - n_leg_rows * row_h_pct - len(ann_lines) * line_step_pct - 2.2),
+                1,
+            )
         elif leg_corner == "corner_lower_left":
-            eq_x, eq_y, eq_align = l_p + 2.8, max(t_p + 5.2, t_p + h_p - max(0, n_leg_rows) * row_h_pct - 6.6), 2
+            eq_x, base_y, eq_align = (
+                l_p + 2.6,
+                max(t_p + 5.0, t_p + h_p - n_leg_rows * row_h_pct - len(ann_lines) * line_step_pct - 2.2),
+                2,
+            )
         else:
-            eq_x, eq_y, eq_align = l_p + 2.8, t_p + 5.2 + n_leg_rows * row_h_pct + 1.4, 2
-        ob.add_page_text_label(
-            op, gp, gl, 1, "FitEqBox", full_ann, eq_x, eq_y,
-            fontsize=eq_fs, pos_scatter=eq_align, format_math=False,
-        )
+            eq_x, base_y, eq_align = l_p + 2.6, t_p + 5.0 + n_leg_rows * row_h_pct + 1.3, 2
+
+        for ln_i, ln_txt in enumerate(ann_lines):
+            ob.add_page_text_label(
+                op,
+                gp,
+                gl,
+                1,
+                f"FitEqBox_{ln_i+1}",
+                ln_txt,
+                eq_x,
+                base_y + ln_i * line_step_pct,
+                fontsize=eq_fs,
+                pos_scatter=eq_align,
+                format_math=False,
+            )
+
+    # Re-lock exact axis bounds after guide plots
+    ob.activate_layer(op, gp, 1)
+    xf0, xf1 = (x_bounds[1], x_bounds[0]) if panel.x_axis.invert else (x_bounds[0], x_bounds[1])
+    yf0, yf1 = (y_bounds[1], y_bounds[0]) if panel.y1_axis.invert else (y_bounds[0], y_bounds[1])
+    gl.set_xlim(xf0, xf1)
+    gl.set_ylim(yf0, yf1)
+    gl.lt_exec(f"layer.x.from={xf0}; layer.x.to={xf1}; layer.y.from={yf0}; layer.y.to={yf1};")
 
     return gp
 
@@ -3154,17 +5663,20 @@ def render_figure_spec_origin(
     out_dir: str | Path,
     out_opju: Optional[str | Path] = None,
     export_images: bool = True,
+    export_pdf: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
     Render a validated `FigureSpec` natively in OriginPro 2024:
     - Saves full editable `.opju` project (`out_opju` when `fig_spec.build_opju` is True)
     - Exports 600 DPI lossless LZW `.tif` + 300 DPI `.png` + `<=960 px` `_qa_previews/*_preview.jpg`
+      (and vector `.pdf` when `export_pdf=True` or `spec.meta.get('export_pdf')` is True)
       via `export_origin_publication_figures` strictly AFTER all styling/Theme/Overlay commits finish.
     """
     spec = fig_spec if isinstance(fig_spec, cg.FigureSpec) else cg.FigureSpec.from_dict(fig_spec)
     ob.set_active_style(spec.theme if spec.theme else spec.style_preset)
     out_p = Path(out_dir).resolve()
     out_p.mkdir(parents=True, exist_ok=True)
+    want_pdf = bool(export_pdf) if export_pdf is not None else bool(spec.meta.get("export_pdf", False))
 
     stem = _sanitize_file_stem(spec.title, default=f"SciOrigin_{spec.mode}")
     opju_target = Path(out_opju).resolve() if out_opju is not None else (out_p / f"{stem}.opju")
@@ -3177,8 +5689,12 @@ def render_figure_spec_origin(
         spec.mode == "bode_dual_panel"
         or (len(spec.panels) == 2 and any(p.meta.get("bode_panel") for p in spec.panels))
     )
+    is_multi_track = (
+        spec.mode == "multi_track_profile"
+        or any(p.meta.get("multi_track") for p in spec.panels)
+    )
     is_xy_fit_band = (
-        spec.mode == "xy_fit_and_band"
+        spec.mode in ("xy_fit_and_band", "dose_response_4pl")
         or (
             len(spec.panels) == 1
             and any(ly.mark == "line_band" or ly.layer_id == "xy_fit_main" for ly in spec.panels[0].layers)
@@ -3207,7 +5723,7 @@ def render_figure_spec_origin(
 
                 primary_figures: Dict[str, str] = {}
                 if export_images:
-                    primary_figures = export_origin_publication_figures(op, gp_main, out_p, stem)
+                    primary_figures = export_origin_publication_figures(op, gp_main, out_p, stem, export_pdf=want_pdf)
                     all_exported_files.extend(primary_figures.values())
 
             elif is_xy_fit_band and len(spec.panels) >= 1:
@@ -3216,7 +5732,7 @@ def render_figure_spec_origin(
 
                 primary_figures = {}
                 if export_images:
-                    primary_figures = export_origin_publication_figures(op, gp_main, out_p, stem)
+                    primary_figures = export_origin_publication_figures(op, gp_main, out_p, stem, export_pdf=want_pdf)
                     all_exported_files.extend(primary_figures.values())
 
             elif is_bode_dual and len(spec.panels) >= 2:
@@ -3225,7 +5741,16 @@ def render_figure_spec_origin(
 
                 primary_figures = {}
                 if export_images:
-                    primary_figures = export_origin_publication_figures(op, gp_main, out_p, stem)
+                    primary_figures = export_origin_publication_figures(op, gp_main, out_p, stem, export_pdf=want_pdf)
+                    all_exported_files.extend(primary_figures.values())
+
+            elif is_multi_track and len(spec.panels) >= 1:
+                gp_main = _render_multi_track_page(op, spec, stem, pal_tmp_dir)
+                graph_names.append(gp_main.name)
+
+                primary_figures = {}
+                if export_images:
+                    primary_figures = export_origin_publication_figures(op, gp_main, out_p, stem, export_pdf=want_pdf)
                     all_exported_files.extend(primary_figures.values())
 
             elif len(spec.panels) == 1:
@@ -3234,7 +5759,7 @@ def render_figure_spec_origin(
 
                 primary_figures = {}
                 if export_images:
-                    primary_figures = export_origin_publication_figures(op, gp_main, out_p, stem)
+                    primary_figures = export_origin_publication_figures(op, gp_main, out_p, stem, export_pdf=want_pdf)
                     all_exported_files.extend(primary_figures.values())
 
             else:
@@ -3264,10 +5789,10 @@ def render_figure_spec_origin(
 
                 primary_figures = {}
                 if export_images:
-                    primary_figures = export_origin_publication_figures(op, gp_main, out_p, stem)
+                    primary_figures = export_origin_publication_figures(op, gp_main, out_p, stem, export_pdf=want_pdf)
                     all_exported_files.extend(primary_figures.values())
                     for pid, sub_stem, gp_sub in standalone_pages:
-                        p_figs = export_origin_publication_figures(op, gp_sub, out_p, sub_stem)
+                        p_figs = export_origin_publication_figures(op, gp_sub, out_p, sub_stem, export_pdf=want_pdf)
                         panel_figures[pid] = p_figs
                         all_exported_files.extend(p_figs.values())
 

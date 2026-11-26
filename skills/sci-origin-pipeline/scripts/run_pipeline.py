@@ -23,6 +23,7 @@ import fitting
 import origin_builder
 import origin_renderer
 import origin_theme
+import packs
 import parsers
 import validator
 
@@ -236,7 +237,242 @@ TEMPLATES: Dict[str, Dict[str, Any]] = {
         "output_dir": "path/to/new_output_folder",
         "input_file": "matrix_data.xlsx",
     },
+    "stat_bar_dot_sig": {
+        "mode": "stat_bar_dot_sig",
+        "style_preset": "style_publication_minimal",
+        "color_scheme": "okabe_ito",
+        "locale": "en",
+        "title": "Group_Bar_Dot_Significance",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "Treatment Group",
+        "y_label": "Relative Expression",
+        "error_bar": "SD",
+        "p_adjust": "fdr_bh",
+        "groups": [
+            {"name": "Control", "values": [1.02, 0.95, 1.08, 0.99, 1.04]},
+            {"name": "Treatment", "values": [1.85, 1.92, 1.76, 2.04, 1.89]},
+        ],
+    },
+    "stat_violin_raincloud": {
+        "mode": "stat_violin_raincloud",
+        "style_preset": "style_arial_clean",
+        "color_scheme": "okabe_ito",
+        "locale": "en",
+        "title": "Cell_Cluster_Violin_Distribution",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "Cluster",
+        "y_label": "Normalized Signal",
+        "show_stats": True,
+        "groups": [
+            {"name": "Cluster 1", "values": [2.1, 2.4, 1.9, 2.3, 2.6, 2.2]},
+            {"name": "Cluster 2", "values": [3.5, 3.8, 3.2, 3.9, 3.6, 4.1]},
+        ],
+    },
+    "volcano_plot": {
+        "mode": "volcano_plot",
+        "style_preset": "style_arial_clean",
+        "locale": "en",
+        "title": "Differential_Expression_Volcano",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "log_2 Fold Change",
+        "y_label": "-log_{10}(FDR)",
+        "fc_cutoff": 1.0,
+        "p_cutoff": 0.05,
+        "top_n_labels": 6,
+        "input_file": "differential_results.xlsx",
+        "gene_col": "Gene",
+        "fc_col": "log2FC",
+        "p_col": "FDR",
+    },
+    "forest_ablation_plot": {
+        "mode": "forest_ablation_plot",
+        "style_preset": "style_arial_clean",
+        "color_scheme": "tol_muted",
+        "locale": "en",
+        "title": "Model_Ablation_Forest_CI",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "\\Delta AUROC (95% CI)",
+        "null_value": 0.0,
+        "items": [
+            {"name": "Full Model", "estimate": 0.082, "ci_low": 0.064, "ci_high": 0.100},
+            {"name": "Ablation 1", "estimate": 0.041, "ci_low": 0.022, "ci_high": 0.060},
+        ],
+    },
+    "dose_response_4pl": {
+        "mode": "dose_response_4pl",
+        "style_preset": "style_publication_minimal",
+        "color_scheme": "okabe_ito",
+        "locale": "en",
+        "title": "Dose_Response_IC50_4PL",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "Concentration (nM)",
+        "y_label": "Cell Viability (%)",
+        "series": [
+            {
+                "name": "Compound 1",
+                "x": [0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0],
+                "y": [99.2, 95.4, 68.1, 22.5, 7.8, 5.1],
+            }
+        ],
+    },
+    "free_energy_diagram": {
+        "mode": "free_energy_diagram",
+        "style_preset": "style_publication_minimal",
+        "color_scheme": "okabe_ito",
+        "locale": "en",
+        "title": "Reaction_Free_Energy_Diagram",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "Reaction Coordinate",
+        "y_label": "Free Energy \\g(D)\\i(G) (eV)",
+        "step_labels": ["*", "*OH", "*O", "*OOH", "O_2"],
+        "pathways": [
+            {"name": "Catalyst 1", "steps": [0.0, 0.82, 2.14, 3.48, 4.92]},
+            {"name": "Catalyst 2", "steps": [0.0, 1.08, 2.62, 3.85, 4.92]},
+        ],
+    },
+    "kaplan_meier_plot": {
+        "mode": "kaplan_meier_plot",
+        "style_preset": "style_publication_minimal",
+        "color_scheme": "okabe_ito",
+        "locale": "en",
+        "title": "Kaplan_Meier_Survival",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "Time (months)",
+        "y_label": "Survival Probability",
+        "show_ci": True,
+        "show_censor": True,
+        "show_risk_table": True,
+        "groups": [
+            {"name": "Targeted Therapy", "time": [2, 5, 9, 14, 18, 24, 30, 36], "event": [0, 1, 0, 1, 0, 0, 1, 0]},
+            {"name": "Standard Care", "time": [1, 3, 6, 8, 11, 15, 20, 24], "event": [1, 1, 1, 0, 1, 1, 0, 1]},
+        ],
+    },
+    "roc_pr_curve": {
+        "mode": "roc_pr_curve",
+        "style_preset": "style_arial_clean",
+        "color_scheme": "okabe_ito",
+        "locale": "en",
+        "title": "Classifier_ROC_Comparison",
+        "output_dir": "path/to/new_output_folder",
+        "curve_kind": "roc",
+        "show_optimal_point": True,
+        "models": [
+            {"name": "Multimodal GNN", "y_true": [0, 0, 0, 1, 1, 1], "y_score": [0.12, 0.28, 0.35, 0.72, 0.88, 0.94]},
+            {"name": "Baseline MLP", "y_true": [0, 0, 0, 1, 1, 1], "y_score": [0.22, 0.48, 0.55, 0.52, 0.76, 0.81]},
+        ],
+    },
+    "nmr_spectrum": {
+        "mode": "nmr_spectrum",
+        "style_preset": "style_publication_minimal",
+        "locale": "en",
+        "title": "Proton_NMR_Spectrum",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "Chemical Shift \\g(d) (ppm)",
+        "y_label": "Intensity (a.u.)",
+        "series": [{"name": "1H NMR (400 MHz)", "file": "spectrum.jdx"}],
+        "peaks": [{"ppm": 7.26, "label": "Ar-H (m)"}],
+    },
+    "broken_axis_plot": {
+        "mode": "broken_axis_plot",
+        "style_preset": "style_publication_minimal",
+        "locale": "en",
+        "title": "Broken_Axis_Comparison",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "Time (h)",
+        "y_label": "Concentration (\\g(m)M)",
+        "x_breaks": [{"from": 12.0, "to": 120.0, "position_pct": 48.0}],
+        "series": [{"name": "Release Profile", "x": [0, 2, 6, 10, 130, 160, 200], "y": [0.0, 18.5, 42.0, 56.2, 84.1, 91.5, 96.0]}],
+    },
+    "dual_x_optical_spectrum": {
+        "mode": "dual_x_optical_spectrum",
+        "style_preset": "style_publication_minimal",
+        "locale": "en",
+        "title": "UV_Vis_PL_Dual_X_Spectrum",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "Wavelength (nm)",
+        "y_label": "Normalized Intensity (a.u.)",
+        "linked_top_x": {"label": "Photon Energy (eV)", "formula": "1239.84193/x"},
+        "series": [{"name": "Absorption", "x": [350, 400, 450, 500, 550, 600, 650], "y": [0.95, 0.88, 0.72, 0.45, 0.12, 0.03, 0.01]}],
+    },
+    "ternary_diagram": {
+        "mode": "ternary_diagram",
+        "style_preset": "style_publication_minimal",
+        "color_scheme": "okabe_ito",
+        "locale": "en",
+        "title": "Ternary_Phase_Diagram",
+        "output_dir": "path/to/new_output_folder",
+        "component_labels": ["SiO_2 (wt%)", "Al_2O_3 (wt%)", "CaO (wt%)"],
+        "series": [{"name": "Single Phase", "a": [20, 35, 50], "b": [50, 40, 25], "c": [30, 25, 25]}],
+    },
+    "polar_radar_plot": {
+        "mode": "polar_radar_plot",
+        "subtype": "polar",
+        "style_preset": "style_arial_clean",
+        "color_scheme": "okabe_ito",
+        "locale": "en",
+        "title": "Polar_Radiation_Pattern",
+        "output_dir": "path/to/new_output_folder",
+        "series": [{"name": "H-Plane", "theta": [0, 45, 90, 135, 180, 225, 270, 315, 360], "r": [1.0, 0.78, 0.32, 0.55, 0.92, 0.55, 0.32, 0.78, 1.0]}],
+    },
+    "multi_track_profile": {
+        "mode": "multi_track_profile",
+        "style_preset": "style_arial_clean",
+        "locale": "en",
+        "title": "Multi_Track_Depth_Profile",
+        "output_dir": "path/to/new_output_folder",
+        "depth_label": "Depth (m)",
+        "depth_invert": True,
+        "horizons": [{"depth_start": 25.0, "depth_end": 40.0, "label": "Thermocline"}],
+        "tracks": [
+            {"name": "Temperature", "x_label": "Temp. (°C)", "depth": [0, 20, 35, 60, 100], "x": [24.2, 23.5, 16.0, 11.4, 9.8]},
+            {"name": "Salinity", "x_label": "Salinity (PSU)", "depth": [0, 20, 35, 60, 100], "x": [34.1, 34.3, 34.9, 35.2, 35.4]},
+        ],
+    },
+    "vector_quiver_field": {
+        "mode": "vector_quiver_field",
+        "style_preset": "style_arial_clean",
+        "locale": "en",
+        "title": "Velocity_Quiver_Field",
+        "output_dir": "path/to/new_output_folder",
+        "x_label": "\\i(x) (mm)",
+        "y_label": "\\i(y) (mm)",
+        "compute_magnitude_bg": True,
+        "x": [-1.0, 0.0, 1.0, -1.0, 0.0, 1.0],
+        "y": [-1.0, -1.0, -1.0, 1.0, 1.0, 1.0],
+        "u": [1.0, 1.0, 1.0, -1.0, -1.0, -1.0],
+        "v": [-1.0, 0.0, 1.0, -1.0, 0.0, 1.0],
+    },
 }
+
+_GRAMMAR_MODES = (
+    "bar_grouped_gradient",
+    "bar_stacked",
+    "bar_stacked_100pct",
+    "dual_y_combo",
+    "curve_with_inset",
+    "electrochem_kinetics",
+    "contour_pseudocolor_2d",
+    "chart_grammar",
+    "xy_fit_and_band",
+    "bode_dual_panel",
+    "stat_distribution",
+    "matrix_heatmap",
+    "stat_bar_dot_sig",
+    "stat_violin_raincloud",
+    "volcano_plot",
+    "forest_ablation_plot",
+    "free_energy_diagram",
+    "dose_response_4pl",
+    "kaplan_meier_plot",
+    "roc_pr_curve",
+    "nmr_spectrum",
+    "broken_axis_plot",
+    "dual_x_optical_spectrum",
+    "ternary_diagram",
+    "polar_radar_plot",
+    "multi_track_profile",
+    "vector_quiver_field",
+)
 
 GRAMMAR_SUBTYPE_ALIASES = (
     "pulse_align",
@@ -245,10 +481,14 @@ GRAMMAR_SUBTYPE_ALIASES = (
     "electrochem_kinetics:pulse_align",
     "electrochem_kinetics:galvanostatic_dqdv",
     "electrochem_kinetics:ragone",
+    "polar_plot",
+    "radar_plot",
+    "polar_radar_plot:polar",
+    "polar_radar_plot:radar",
 )
 
 ALL_INIT_TEMPLATE_MODES = sorted(
-    set(TEMPLATES.keys()) | set(chart_grammar.SUPPORTED_GRAMMAR_MODES) | set(GRAMMAR_SUBTYPE_ALIASES)
+    set(TEMPLATES.keys()) | set(_GRAMMAR_MODES) | set(chart_grammar.SUPPORTED_GRAMMAR_MODES) | set(GRAMMAR_SUBTYPE_ALIASES)
 )
 
 
@@ -492,6 +732,20 @@ def _extract_1d_xy_from_file_item(item: Dict[str, Any], parent_block: Dict[str, 
         dc = parsers.extract_primary_discharge_curve(nd, voltage_cutoff=item.get("voltage_cutoff"))
         qk = "specific_capacity_mAh_g" if dc.get("has_active_mass") else "capacity_mAh"
         return dc[qk].tolist(), dc["voltage_V"].tolist()
+
+    if ext in (".jdx", ".dx", ".jcamp", ".s1p", ".s2p", ".jsonl"):
+        dp = packs.parse_domain_file(fpath)
+        if "x" in dp and "y" in dp:
+            return [float(v) for v in dp["x"]], [float(v) for v in dp["y"]]
+        if "freq_hz" in dp:
+            yk = str(item.get("y_key") or ("s21_db" if dp.get("s21_db") else "s11_db"))
+            f_scale = float(item.get("freq_scale", 1e-9))
+            return [float(v) * f_scale for v in dp["freq_hz"]], [float(v) for v in dp[yk]]
+        if "steps" in dp and dp.get("metrics"):
+            mk = str(item.get("metric") or next(iter(dp["metrics"].keys())))
+            m_entry = dp["metrics"][mk]
+            yv_m = m_entry["mean"] if isinstance(m_entry, dict) and "mean" in m_entry else m_entry
+            return [float(v) for v in dp["steps"]], [float(v) for v in yv_m]
 
     if ext in (".xlsx", ".xlsm", ".xls", ".csv", ".tsv"):
         df = electrochem_transforms.load_tabular_sheet(
@@ -846,10 +1100,10 @@ def _preload_grammar_config_data(
                                 s_it["x"] = sx
                                 s_it["y"] = sy
 
-    # 7. xy_fit_and_band: load XY series, run CI-band fitting
-    if mode == "xy_fit_and_band":
+    # 7. xy_fit_and_band / dose_response_4pl: load external XY series if file-backed (curve_models fitting runs in chart_grammar)
+    if mode in ("xy_fit_and_band", "dose_response_4pl"):
         for s_it in work_cfg.get("series", []):
-            if isinstance(s_it, dict) and s_it.get("y") is None and (s_it.get("file") or work_cfg.get("input_file")):
+            if isinstance(s_it, dict) and s_it.get("y") is None and s_it.get("replicates") is None and (s_it.get("file") or work_cfg.get("input_file")):
                 sx, sy = _extract_1d_xy_from_file_item(s_it, work_cfg)
                 s_it["x"] = sx
                 s_it["y"] = sy
@@ -858,32 +1112,10 @@ def _preload_grammar_config_data(
             if s_list_fit and isinstance(s_list_fit[0], dict) and s_list_fit[0].get("x") is not None and s_list_fit[0].get("y") is not None:
                 work_cfg["x"] = s_list_fit[0]["x"]
                 work_cfg["y"] = s_list_fit[0]["y"]
-            elif work_cfg.get("input_file"):
+            elif not s_list_fit and work_cfg.get("input_file"):
                 sx_top, sy_top = _extract_1d_xy_from_file_item(work_cfg, work_cfg)
                 work_cfg["x"] = sx_top
                 work_cfg["y"] = sy_top
-        try:
-            fit_fn = getattr(electrochem_transforms, "fit_xy_with_ci95", None)
-            if fit_fn is not None:
-                fit_model_name = str(work_cfg.get("model") or work_cfg.get("fit_model") or "linear")
-                n_grid_pts = int(work_cfg.get("n_grid", 200))
-                for s_it in work_cfg.get("series", []):
-                    if isinstance(s_it, dict) and s_it.get("x") is not None and s_it.get("y") is not None:
-                        fit_res = fit_fn(
-                            np.asarray(s_it["x"], dtype=float),
-                            np.asarray(s_it["y"], dtype=float),
-                            model=fit_model_name,
-                            n_grid=n_grid_pts,
-                        )
-                        s_it["x_fit"] = fit_res.get("x_fit", [])
-                        s_it["y_fit"] = fit_res.get("y_fit", [])
-                        s_it["fit_y"] = fit_res.get("y_fit", [])
-                        s_it["y_low"] = fit_res.get("y_low", [])
-                        s_it["y_high"] = fit_res.get("y_high", [])
-                        s_it["ci_band_lower"] = fit_res.get("y_low", [])
-                        s_it["ci_band_upper"] = fit_res.get("y_high", [])
-        except Exception as _e:
-            audit_notes.append({"note": f"xy_fit_and_band CI fitting skipped: {_e}"})
         return work_cfg, loaded_tables, summary_tables, audit_notes
 
     # 8. bode_dual_panel: parse EIS files and extract freq/|Z|/phase for Bode plot
@@ -995,6 +1227,206 @@ def _preload_grammar_config_data(
                 audit_notes.append({"note": f"matrix_heatmap load failed: {_e}"})
         return work_cfg, loaded_tables, summary_tables, audit_notes
 
+    # 11. Cross-science statistical, survival, optical, ternary, polar/radar, multi-track & vector modes
+    if mode in (
+        "stat_bar_dot_sig",
+        "stat_violin_raincloud",
+        "volcano_plot",
+        "forest_ablation_plot",
+        "free_energy_diagram",
+        "kaplan_meier_plot",
+        "roc_pr_curve",
+        "nmr_spectrum",
+        "broken_axis_plot",
+        "dual_x_optical_spectrum",
+        "ternary_diagram",
+        "polar_radar_plot",
+        "multi_track_profile",
+        "vector_quiver_field",
+    ):
+        if mode == "broken_axis_plot" and str(work_cfg.get("mark", "")).lower() in (
+            "bar_grouped_gradient",
+            "bar_stacked",
+            "bar_stacked_100pct",
+        ):
+            _apply_tabular_series_extraction(
+                work_cfg,
+                loaded_tables,
+                summary_tables,
+                summary_name="BrokenAxis_Table",
+                force_100=(str(work_cfg.get("mark", "")).lower() == "bar_stacked_100pct"),
+            )
+
+        inp = work_cfg.get("input_file")
+        df_cs = None
+        if inp:
+            inp_p = Path(inp)
+            try:
+                if inp_p.suffix.lower() in (".jdx", ".dx", ".jcamp", ".s1p", ".s2p", ".jsonl"):
+                    sx_d, sy_d = _extract_1d_xy_from_file_item(work_cfg, work_cfg)
+                    if not work_cfg.get("series"):
+                        work_cfg["series"] = [{"name": work_cfg.get("sample_name", inp_p.stem), "x": sx_d, "y": sy_d}]
+                else:
+                    df_cs = electrochem_transforms.load_tabular_sheet(
+                        inp,
+                        sheet=work_cfg.get("sheet", 0),
+                        header_row=work_cfg.get("header_row", 0),
+                    )
+                    loaded_tables["main"] = df_cs
+                    loaded_tables[str(inp)] = df_cs
+            except Exception as _e:
+                audit_notes.append(f"{mode} preload failed: {_e}")
+
+        # Populate file-backed 1D/ternary/polar/track series when inline arrays are omitted
+        for s_it in work_cfg.get("series", work_cfg.get("curves", [])):
+            if isinstance(s_it, dict) and s_it.get("file"):
+                if mode == "ternary_diagram" and s_it.get("a") is None:
+                    df_t = electrochem_transforms.load_tabular_sheet(
+                        s_it["file"],
+                        sheet=s_it.get("sheet", work_cfg.get("sheet", 0)),
+                        header_row=s_it.get("header_row", work_cfg.get("header_row", 0)),
+                    )
+                    ac = electrochem_transforms._resolve_col_name(df_t, s_it.get("a_col", work_cfg.get("a_col", 0)))
+                    bc = electrochem_transforms._resolve_col_name(df_t, s_it.get("b_col", work_cfg.get("b_col", 1)))
+                    cc = electrochem_transforms._resolve_col_name(df_t, s_it.get("c_col", work_cfg.get("c_col", 2)))
+                    s_it["a"] = pd.to_numeric(df_t[ac], errors="coerce").dropna().tolist()
+                    s_it["b"] = pd.to_numeric(df_t[bc], errors="coerce").dropna().tolist()
+                    s_it["c"] = pd.to_numeric(df_t[cc], errors="coerce").dropna().tolist()
+                elif mode == "polar_radar_plot" and s_it.get("theta") is None and s_it.get("y") is None:
+                    tx, ry = _extract_1d_xy_from_file_item(s_it, work_cfg)
+                    if str(work_cfg.get("subtype", "polar")).lower() == "radar":
+                        s_it["y"] = ry
+                    else:
+                        s_it["theta"] = tx
+                        s_it["r"] = ry
+                elif s_it.get("y") is None:
+                    sx_f, sy_f = _extract_1d_xy_from_file_item(s_it, work_cfg)
+                    s_it["x"] = sx_f
+                    s_it["y"] = sy_f
+
+        for tr_it in work_cfg.get("tracks", []):
+            if isinstance(tr_it, dict) and tr_it.get("file") and tr_it.get("x") is None:
+                dx_f, xv_f = _extract_1d_xy_from_file_item(tr_it, work_cfg)
+                if bool(tr_it.get("depth_in_col0", True)):
+                    tr_it["depth"] = dx_f
+                    tr_it["x"] = xv_f
+                else:
+                    tr_it["x"] = dx_f
+                    tr_it["depth"] = xv_f
+
+        # Auto-extract structured tables from `df_cs` for tabular CSV/Excel inputs
+        if df_cs is not None and not df_cs.empty:
+            cols_lower = {str(c).strip().lower(): c for c in df_cs.columns}
+            if mode == "kaplan_meier_plot" and not work_cfg.get("groups") and not work_cfg.get("arms"):
+                t_col = work_cfg.get("time_col") or next((cols_lower[k] for k in ("time", "os_months", "survival_time", "months", "days") if k in cols_lower), df_cs.columns[0])
+                e_col = work_cfg.get("event_col") or next((cols_lower[k] for k in ("event", "status", "dead", "censored") if k in cols_lower), df_cs.columns[1])
+                g_col = work_cfg.get("group_col") or next((cols_lower[k] for k in ("group", "arm", "cohort", "treatment") if k in cols_lower), None)
+                if g_col and g_col in df_cs.columns:
+                    work_cfg["groups"] = [
+                        {
+                            "name": str(gn).strip(),
+                            "time": pd.to_numeric(gdf[t_col], errors="coerce").dropna().tolist(),
+                            "event": pd.to_numeric(gdf[e_col], errors="coerce").dropna().astype(int).tolist(),
+                        }
+                        for gn, gdf in df_cs.groupby(g_col, sort=False)
+                    ]
+                else:
+                    work_cfg["groups"] = [
+                        {
+                            "name": str(work_cfg.get("sample_name", "Cohort")),
+                            "time": pd.to_numeric(df_cs[t_col], errors="coerce").dropna().tolist(),
+                            "event": pd.to_numeric(df_cs[e_col], errors="coerce").dropna().astype(int).tolist(),
+                        }
+                    ]
+            elif mode == "roc_pr_curve" and not work_cfg.get("models") and not work_cfg.get("series"):
+                y_col = work_cfg.get("label_col") or next((cols_lower[k] for k in ("y_true", "label", "target", "outcome", "class") if k in cols_lower), df_cs.columns[0])
+                s_cols = work_cfg.get("score_cols") or ([work_cfg["score_col"]] if work_cfg.get("score_col") else [c for c in df_cs.columns if c != y_col])
+                yt_arr = pd.to_numeric(df_cs[y_col], errors="coerce")
+                models_ext = []
+                for sc_nm in s_cols:
+                    if sc_nm in df_cs.columns:
+                        ys_arr = pd.to_numeric(df_cs[sc_nm], errors="coerce")
+                        m_ok = yt_arr.notna() & ys_arr.notna()
+                        if m_ok.any():
+                            models_ext.append({"name": str(sc_nm), "y_true": yt_arr[m_ok].astype(int).tolist(), "y_score": ys_arr[m_ok].astype(float).tolist()})
+                if models_ext:
+                    work_cfg["models"] = models_ext
+            elif mode == "ternary_diagram" and not work_cfg.get("series"):
+                ac = electrochem_transforms._resolve_col_name(df_cs, work_cfg.get("a_col", 0))
+                bc = electrochem_transforms._resolve_col_name(df_cs, work_cfg.get("b_col", 1))
+                cc = electrochem_transforms._resolve_col_name(df_cs, work_cfg.get("c_col", 2))
+                g_col = work_cfg.get("group_col") or next((cols_lower[k] for k in ("group", "phase", "series", "class") if k in cols_lower and cols_lower[k] not in (ac, bc, cc)), None)
+                if not work_cfg.get("component_labels"):
+                    work_cfg["component_labels"] = [str(ac), str(bc), str(cc)]
+                if g_col and g_col in df_cs.columns:
+                    work_cfg["series"] = [
+                        {
+                            "name": str(gn).strip(),
+                            "a": pd.to_numeric(gdf[ac], errors="coerce").dropna().tolist(),
+                            "b": pd.to_numeric(gdf[bc], errors="coerce").dropna().tolist(),
+                            "c": pd.to_numeric(gdf[cc], errors="coerce").dropna().tolist(),
+                        }
+                        for gn, gdf in df_cs.groupby(g_col, sort=False)
+                    ]
+                else:
+                    work_cfg["series"] = [
+                        {
+                            "name": str(work_cfg.get("sample_name", "Compositions")),
+                            "a": pd.to_numeric(df_cs[ac], errors="coerce").dropna().tolist(),
+                            "b": pd.to_numeric(df_cs[bc], errors="coerce").dropna().tolist(),
+                            "c": pd.to_numeric(df_cs[cc], errors="coerce").dropna().tolist(),
+                        }
+                    ]
+            elif mode == "polar_radar_plot" and not work_cfg.get("series"):
+                if str(work_cfg.get("subtype", "polar")).lower() == "radar":
+                    cat_c = df_cs.columns[0]
+                    work_cfg.setdefault("categories", [str(v) for v in df_cs[cat_c].tolist()])
+                    work_cfg["series"] = [
+                        {"name": str(c), "y": pd.to_numeric(df_cs[c], errors="coerce").dropna().tolist()}
+                        for c in df_cs.columns[1:]
+                    ]
+                else:
+                    th_c = df_cs.columns[0]
+                    th_v = pd.to_numeric(df_cs[th_c], errors="coerce").dropna().tolist()
+                    work_cfg["series"] = [
+                        {"name": str(c), "theta": th_v, "r": pd.to_numeric(df_cs[c], errors="coerce").dropna().tolist()}
+                        for c in df_cs.columns[1:]
+                    ]
+            elif mode == "multi_track_profile" and not work_cfg.get("tracks"):
+                d_col = work_cfg.get("depth_col") or next((cols_lower[k] for k in ("depth", "depth_m", "age_ka", "elevation") if k in cols_lower), df_cs.columns[0])
+                d_vals = pd.to_numeric(df_cs[d_col], errors="coerce")
+                tracks_ext = []
+                for c in df_cs.columns:
+                    if c == d_col:
+                        continue
+                    xv_c = pd.to_numeric(df_cs[c], errors="coerce")
+                    m_ok = d_vals.notna() & xv_c.notna()
+                    if m_ok.any():
+                        tracks_ext.append({"name": str(c), "x_label": str(c), "depth": d_vals[m_ok].tolist(), "x": xv_c[m_ok].tolist()})
+                if tracks_ext:
+                    work_cfg["tracks"] = tracks_ext
+            elif mode == "vector_quiver_field" and work_cfg.get("x") is None:
+                xc = electrochem_transforms._resolve_col_name(df_cs, work_cfg.get("x_col", cols_lower.get("x", 0)))
+                yc = electrochem_transforms._resolve_col_name(df_cs, work_cfg.get("y_col", cols_lower.get("y", 1)))
+                uc = electrochem_transforms._resolve_col_name(df_cs, work_cfg.get("u_col", cols_lower.get("u", 2)))
+                vc = electrochem_transforms._resolve_col_name(df_cs, work_cfg.get("v_col", cols_lower.get("v", 3)))
+                work_cfg["x"] = pd.to_numeric(df_cs[xc], errors="coerce").dropna().tolist()
+                work_cfg["y"] = pd.to_numeric(df_cs[yc], errors="coerce").dropna().tolist()
+                work_cfg["u"] = pd.to_numeric(df_cs[uc], errors="coerce").dropna().tolist()
+                work_cfg["v"] = pd.to_numeric(df_cs[vc], errors="coerce").dropna().tolist()
+            elif mode in ("nmr_spectrum", "broken_axis_plot", "dual_x_optical_spectrum") and not work_cfg.get("series"):
+                xc = df_cs.columns[0]
+                xv_base = pd.to_numeric(df_cs[xc], errors="coerce")
+                work_cfg["series"] = [
+                    {
+                        "name": str(c),
+                        "x": xv_base[xv_base.notna() & pd.to_numeric(df_cs[c], errors="coerce").notna()].tolist(),
+                        "y": pd.to_numeric(df_cs[c], errors="coerce")[xv_base.notna() & pd.to_numeric(df_cs[c], errors="coerce").notna()].tolist(),
+                    }
+                    for c in df_cs.columns[1:]
+                ]
+        return work_cfg, loaded_tables, summary_tables, audit_notes
+
     return work_cfg, loaded_tables, summary_tables, audit_notes
 
 
@@ -1007,9 +1439,37 @@ def _run_grammar_mode(
 ) -> Dict[str, Any]:
     """Execute declarative Chart Grammar modes end-to-end via OriginPro native rendering + Source Data export."""
     style_g = origin_theme.load_theme(cfg.get("style_preset"))
+    js_name = cfg.get("journal_spec")
+    apply_js_fn = getattr(origin_theme, "apply_journal_spec", None)
+    if js_name and callable(apply_js_fn):
+        style_g = apply_js_fn(style_g, js_name)
     origin_builder.set_active_style(style_g)
     work_cfg, loaded_tables, summary_tables, audit_notes = _preload_grammar_config_data(cfg, findings)
+    if js_name and not work_cfg.get("journal_spec"):
+        work_cfg["journal_spec"] = js_name
     fig_spec = chart_grammar.compile_config_to_figure_spec(work_cfg, loaded_tables=loaded_tables)
+
+    if cfg.get("export_pdf"):
+        fig_spec.meta["export_pdf"] = True
+    if cfg.get("locale"):
+        fig_spec.meta["locale"] = str(cfg["locale"])
+    if js_name:
+        fig_spec.meta["journal_spec"] = str(js_name)
+
+    for audit_attr in ("audit_statistical_rigor", "audit_survival_and_roc"):
+        stat_audit_fn = getattr(validator, audit_attr, None)
+        if callable(stat_audit_fn):
+            try:
+                target_arg = work_cfg if audit_attr == "audit_survival_and_roc" else fig_spec
+                stat_findings = stat_audit_fn(target_arg)
+                if isinstance(stat_findings, list):
+                    for sf in stat_findings:
+                        if isinstance(sf, dict):
+                            findings.append({str(k): str(v) for k, v in sf.items()})
+                            if sf.get("message") or sf.get("detail"):
+                                audit_notes.append(str(sf.get("message") or sf.get("detail")))
+            except Exception:
+                pass
 
     stem = origin_renderer._sanitize_file_stem(fig_spec.title, default=f"SciOrigin_{fig_spec.mode}")
     xlsx_path = excel_exporter.export_multi_chart_workbook(
@@ -1017,6 +1477,7 @@ def _run_grammar_mode(
         raw_out_dir / f"Source_Data_{stem}.xlsx",
         summary_tables=summary_tables or None,
         audit_notes=audit_notes or None,
+        locale=cfg.get("locale"),
     )
     expected_files: List[str] = [xlsx_path]
 
@@ -1057,9 +1518,15 @@ def _run_grammar_mode(
     return _finalize_audit(out_dir, payload, expected_files, findings, do_origin=do_origin_flag)
 
 
-def cmd_run_config(config_path: str | Path, skip_origin: bool = False) -> Dict[str, Any]:
+def cmd_run_config(
+    config_path: str | Path,
+    skip_origin: bool = False,
+    journal_spec: Optional[str] = None,
+) -> Dict[str, Any]:
     cfg_p = Path(config_path).resolve()
     cfg = json.loads(cfg_p.read_text(encoding="utf-8-sig"))
+    if journal_spec:
+        cfg["journal_spec"] = str(journal_spec).strip()
     mode = str(cfg["mode"]).strip()
 
     out_dir = Path(cfg["output_dir"]).resolve()
@@ -1071,11 +1538,14 @@ def cmd_run_config(config_path: str | Path, skip_origin: bool = False) -> Dict[s
     expected_files: List[str] = []
 
     # 1. Route all declarative Chart Grammar modes directly
-    if mode in chart_grammar.SUPPORTED_GRAMMAR_MODES:
+    if mode in _GRAMMAR_MODES or mode in chart_grammar.SUPPORTED_GRAMMAR_MODES or mode in GRAMMAR_SUBTYPE_ALIASES:
         return _run_grammar_mode(cfg, out_dir, raw_out_dir, skip_origin=skip_origin, findings=findings)
 
     # 2. Load unified Origin theme (defaults to `style_publication_minimal.json`) and activate runtime spec
     style = origin_theme.load_theme(cfg.get("style_preset"))
+    apply_js_fn = getattr(origin_theme, "apply_journal_spec", None)
+    if cfg.get("journal_spec") and callable(apply_js_fn):
+        style = apply_js_fn(style, cfg.get("journal_spec"))
     origin_builder.set_active_style(style)
     minimal_ticks = bool(style.get("minimal_axes", True))
     box_thickness = float(style.get("figure_box_linewidth", 3.0))
@@ -2213,41 +2683,73 @@ def cmd_run_config(config_path: str | Path, skip_origin: bool = False) -> Dict[s
             do_origin=want_opju_saved,
         )
 
-    supported_all = sorted(set(TEMPLATES.keys()) | set(chart_grammar.SUPPORTED_GRAMMAR_MODES))
+    supported_all = sorted(set(TEMPLATES.keys()) | set(_GRAMMAR_MODES) | set(chart_grammar.SUPPORTED_GRAMMAR_MODES))
     raise ValueError(f"Unsupported pipeline mode: {mode}. Supported: {supported_all}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="SciOrigin Cross-Material Scientific Workflow Execution Engine")
+    parser = argparse.ArgumentParser(description="SciOrigin Cross-Discipline Scientific Workflow Execution Engine")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_scan = sub.add_parser("scan", help="Scan directory and classify experimental modalities")
+    p_scan = sub.add_parser("scan", help="Scan directory and classify experimental modalities & domain packs")
     p_scan.add_argument("target", help="Directory path to scan")
 
-    p_insp = sub.add_parser("inspect", help="Inspect file sheets/regions/units/SNR/active-mass before method choice")
+    p_insp = sub.add_parser("inspect", help="Inspect file sheets/regions/units/SNR/domain-pack metadata before method choice")
     p_insp.add_argument("target", help="File or directory path to inspect")
+
+    sub.add_parser("list-modes", help="List all supported pipeline & declarative chart grammar modes")
+    sub.add_parser("list-packs", help="List pluggable cross-science domain packs and supported extensions")
 
     p_tpl = sub.add_parser("init-template", help="Print a ready-to-fill JSON task config template for a mode")
     p_tpl.add_argument("mode", choices=ALL_INIT_TEMPLATE_MODES, help="Pipeline mode name")
 
     p_run = sub.add_parser("run", help="Execute a JSON pipeline task specification")
     p_run.add_argument("config", help="Path to JSON task config file")
-    p_run.add_argument("--skip-origin", action="store_true", help="Offline fallback: skip OriginPro and render figures via matplotlib")
+    p_run.add_argument("--skip-origin", action="store_true", help="Offline fallback: skip OriginPro and export Source Data / offline preview")
+    p_run.add_argument(
+        "--journal-spec",
+        dest="journal_spec",
+        default=None,
+        help="Journal physical layout spec (e.g. presentation_4_3, nature_single_89mm, science_single_55mm, cell_single_85mm, acs_single_3.25in, ieee_single_3.5in)",
+    )
 
     args = parser.parse_args()
     if args.cmd == "scan":
-        out = cmd_scan(args)
+        out: Any = cmd_scan(args)
     elif args.cmd == "inspect":
         out = cmd_inspect(args)
+    elif args.cmd == "list-modes":
+        grammar_modes = sorted(set(_GRAMMAR_MODES) | set(chart_grammar.SUPPORTED_GRAMMAR_MODES))
+        domain_modes = sorted(set(TEMPLATES.keys()) - set(grammar_modes))
+        js_valid = list(getattr(origin_theme, "VALID_JOURNAL_SPECS", ("presentation_4_3",)))
+        out = {
+            "total_modes": len(set(grammar_modes) | set(domain_modes)),
+            "grammar_modes": grammar_modes,
+            "domain_pipeline_modes": domain_modes,
+            "subtype_aliases": list(GRAMMAR_SUBTYPE_ALIASES),
+            "journal_specs": js_valid,
+        }
+    elif args.cmd == "list-packs":
+        out = {"domain_packs": packs.list_domain_packs()}
     elif args.cmd == "init-template":
-        if args.mode in chart_grammar.SUPPORTED_GRAMMAR_MODES or args.mode in GRAMMAR_SUBTYPE_ALIASES:
-            out = chart_grammar.generate_mode_template(args.mode)
+        alias_map = {
+            "polar_plot": "polar_radar_plot",
+            "polar_radar_plot:polar": "polar_radar_plot",
+            "radar_plot": "polar_radar_plot:radar",
+        }
+        tpl_mode = alias_map.get(args.mode, args.mode)
+        gen_fn = getattr(chart_grammar, "generate_mode_template", None)
+        if callable(gen_fn) and (tpl_mode in chart_grammar.SUPPORTED_GRAMMAR_MODES or tpl_mode in GRAMMAR_SUBTYPE_ALIASES):
+            try:
+                out = gen_fn(tpl_mode)
+            except ValueError:
+                out = TEMPLATES[tpl_mode.split(":")[0]]
         else:
             out = TEMPLATES[args.mode]
     else:
-        out = cmd_run_config(args.config, skip_origin=args.skip_origin)
+        out = cmd_run_config(args.config, skip_origin=args.skip_origin, journal_spec=args.journal_spec)
     print(json.dumps(out, ensure_ascii=False, indent=2))
-    if args.cmd == "run" and out.get("status") != "success":
+    if args.cmd == "run" and isinstance(out, dict) and out.get("status") != "success":
         sys.exit(2)
 
 

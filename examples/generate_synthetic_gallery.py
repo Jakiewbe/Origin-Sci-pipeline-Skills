@@ -1,15 +1,19 @@
 """
-generate_synthetic_gallery.py - Unified 100% Synthetic Mathematical Demo Generator for SciOrigin v6.0.
+generate_synthetic_gallery.py - Unified 100% Synthetic Mathematical Demo Generator for SciOrigin v7.0.
 
-Generates all 27 publication-ready showcase figures directly in headless OriginPro 2024 (`skip_origin=False`)
-across three modular showcase suites — zero external or private data files required:
+Generates all 43 publication-ready showcase figures directly in headless OriginPro 2024 (`skip_origin=False`)
+across five modular showcase suites — zero external or private data files required:
   - Part 1 (`gallery_part1_characterization.py`): 9 characterization & deconvolution pipelines
   - Part 2 (`gallery_part2_electrochem.py`): 7 electrochemistry, composite 2x2 & operando 2D pipelines
   - Part 3 (`gallery_part3_declarative.py`): 11 dual-theme, statistical, regression & matrix grammar demos
+  - Part 4 (`gallery_part4_cross_science.py`): 6 cross-science (bio/omics/pharma/catalysis/ML) grammar demos
+  - Part 5 (`gallery_part5_hard_and_noncartesian.py`): 10 clinical survival/ROC, NMR, broken-axis, dual-X, ternary, polar/radar, multi-track & vector-quiver demos
 
 Usage:
     python examples/generate_synthetic_gallery.py
     python examples/generate_synthetic_gallery.py --part 3
+    python examples/generate_synthetic_gallery.py --part 4
+    python examples/generate_synthetic_gallery.py --part 5
     python examples/generate_synthetic_gallery.py --part all
 """
 from __future__ import annotations
@@ -31,6 +35,8 @@ _PART_SPECS = (
     ("1", "gallery_part1_characterization", "generate_part1"),
     ("2", "gallery_part2_electrochem", "generate_part2"),
     ("3", "gallery_part3_declarative", "generate_part3"),
+    ("4", "gallery_part4_cross_science", "generate_part4"),
+    ("5", "gallery_part5_hard_and_noncartesian", "generate_part5"),
 )
 
 
@@ -60,13 +66,13 @@ def run_gallery_parts(part: str = "all", gallery_dir: Path = GALLERY_DIR) -> Lis
 
 def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Generate 100% synthetic SciOrigin v6.0 showcase figures via headless OriginPro 2024."
+        description="Generate 100% synthetic SciOrigin v7.0 showcase figures via headless OriginPro 2024."
     )
     parser.add_argument(
         "--part",
-        choices=("1", "2", "3", "all"),
+        choices=("1", "2", "3", "4", "5", "all"),
         default="all",
-        help="Which gallery part to render: 1 (characterization), 2 (electrochem), 3 (declarative), or all.",
+        help="Which gallery part to render: 1 (characterization), 2 (electrochem), 3 (declarative), 4 (cross-science), 5 (hard & non-Cartesian), or all.",
     )
     parser.add_argument(
         "--gallery-dir",

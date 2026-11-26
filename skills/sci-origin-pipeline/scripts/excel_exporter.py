@@ -4,7 +4,7 @@ import dataclasses
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import openpyxl
@@ -857,14 +857,15 @@ def _write_1d_series_to_sheet(
 
     x_lbl_base = axes_meta["x"]["label"] or "X"
     x_unit_base = axes_meta["x"]["unit"]
+    has_extra_cols = any(bool(e.get("extra_cols")) or bool(e.get("swap_depth_first")) for e in series_entries)
 
     # Determine if all series share categorical X or identical numeric X
     resolved_cats: Optional[List[str]] = None
-    if panel_categories is not None and len(panel_categories) > 0:
+    if not has_extra_cols and panel_categories is not None and len(panel_categories) > 0:
         cand_cats = [str(c) for c in panel_categories]
         if all(len(e["y"]) == len(cand_cats) and (e["x"] is None or len(e["x"]) == len(cand_cats)) for e in series_entries):
             resolved_cats = cand_cats
-    else:
+    elif not has_extra_cols:
         first_cats = series_entries[0].get("categories")
         if first_cats is not None and len(first_cats) > 0:
             cand_cats = [str(c) for c in first_cats]
@@ -889,7 +890,7 @@ def _write_1d_series_to_sheet(
                     resolved_cats = cand_cats
 
     shared_numeric_x: Optional[np.ndarray] = None
-    if resolved_cats is None and all(e["x"] is not None and len(e["x"]) == len(series_entries[0]["x"]) for e in series_entries):
+    if not has_extra_cols and resolved_cats is None and all(e["x"] is not None and len(e["x"]) == len(series_entries[0]["x"]) for e in series_entries):
         try:
             x0_arr = np.asarray(series_entries[0]["x"], dtype=float).ravel()
             if len(x0_arr) > 0 and np.all(np.isfinite(x0_arr)):
@@ -961,14 +962,25 @@ def _write_1d_series_to_sheet(
             x_vals = list(range(1, len(y_vals) + 1))
 
         n_cur = min(len(x_vals), len(y_vals))
+        for _ex_hdr, _ex_u, ex_vals in (entry.get("extra_cols") or []):
+            max_rows = max(max_rows, len(ex_vals))
         max_rows = max(max_rows, n_cur)
 
-        headers.append(_format_col_header(f"{s_name}_{eff_x_lbl}", eff_x_unit))
-        headers.append(_format_col_header(s_name, eff_y_unit, axis_badge=badge))
-        block_cols: List[List[Any]] = [
-            [_excel_scalar(x_vals[i]) for i in range(n_cur)],
-            [_excel_scalar(y_vals[i]) for i in range(n_cur)],
-        ]
+        if entry.get("swap_depth_first"):
+            d_lbl = entry.get("depth_label") or axes_meta[ax_key]["label"] or "Depth"
+            headers.append(_format_col_header(f"{s_name}_{d_lbl}" if len(series_entries) > 1 else d_lbl, eff_y_unit))
+            headers.append(_format_col_header(entry.get("y_header_override") or eff_x_lbl or s_name, eff_x_unit, axis_badge=badge))
+            block_cols: List[List[Any]] = [
+                [_excel_scalar(y_vals[i]) for i in range(n_cur)],
+                [_excel_scalar(x_vals[i]) for i in range(n_cur)],
+            ]
+        else:
+            headers.append(_format_col_header(f"{s_name}_{eff_x_lbl}", eff_x_unit))
+            headers.append(_format_col_header(entry.get("y_header_override") or s_name, eff_y_unit, axis_badge=badge))
+            block_cols = [
+                [_excel_scalar(x_vals[i]) for i in range(n_cur)],
+                [_excel_scalar(y_vals[i]) for i in range(n_cur)],
+            ]
 
         if entry["y_err"] is not None:
             headers.append(_format_col_header(f"{s_name}_Err", eff_y_unit, axis_badge=badge))
@@ -984,6 +996,9 @@ def _write_1d_series_to_sheet(
             fit_v = list(entry["y_fit"])
             headers.append(_format_col_header(f"{s_name}_Fit", eff_y_unit, axis_badge=badge))
             block_cols.append([_excel_scalar(fit_v[i]) if i < len(fit_v) else None for i in range(n_cur)])
+        for ex_hdr, ex_u, ex_vals in (entry.get("extra_cols") or []):
+            headers.append(_format_col_header(ex_hdr, ex_u, axis_badge=badge))
+            block_cols.append([_excel_scalar(v) for v in ex_vals])
 
         col_blocks.append(block_cols)
 
@@ -1107,6 +1122,10 @@ def _extract_layer_series_entries(
         if y_arr_check.ndim != 1 or len(y_arr_check) == 0:
             continue
 
+        sm = s.get("meta") if isinstance(s.get("meta"), dict) else {}
+        if sm.get("is_chance_line") or sm.get("is_optimal_point") or sm.get("is_ts_barrier"):
+            continue
+
         s_axis = _normalize_axis_key(s.get("axis") or layer_axis)
         s_name = str(s.get("name") or s.get("label") or f"Series_{idx + 1}").strip()
         x_raw = s.get("x")
@@ -1115,6 +1134,36 @@ def _extract_layer_series_entries(
         y_low = s.get("y_low") if s.get("y_low") is not None else s.get("lower")
         y_high = s.get("y_high") if s.get("y_high") is not None else s.get("upper")
         y_fit = s.get("y_fit") if s.get("y_fit") is not None else s.get("fit_y")
+
+        eff_x_lbl = s.get("x_label") or layer.get("x_label")
+        y_hdr_override: Optional[str] = None
+        extra_cols: List[Tuple[str, Optional[str], List[Any]]] = []
+        swap_depth = bool(sm.get("track_index") is not None and sm.get("depth_label"))
+
+        # Preserve ternary C component (`A + B + C = 100%`)
+        if sm.get("ternary_c") is not None:
+            comp_lbls = sm.get("component_labels") or ["Component_A", "Component_B", "Component_C"]
+            eff_x_lbl = str(comp_lbls[0])
+            y_hdr_override = f"{s_name}_{comp_lbls[1]}"
+            extra_cols.append((f"{s_name}_{comp_lbls[2]}", s.get("z_unit") or "%", list(sm["ternary_c"])))
+
+        # Preserve 2D vector field `(u, v, x_end, y_end, magnitude)`
+        if sm.get("u") is not None and sm.get("v") is not None:
+            eff_x_lbl = eff_x_lbl or "X"
+            y_hdr_override = f"{s_name}_Y"
+            extra_cols.append((f"{s_name}_U", None, list(sm["u"])))
+            extra_cols.append((f"{s_name}_V", None, list(sm["v"])))
+            if sm.get("x_end") is not None and sm.get("y_end") is not None:
+                extra_cols.append((f"{s_name}_X_End", s.get("x_unit"), list(sm["x_end"])))
+                extra_cols.append((f"{s_name}_Y_End", s.get("y_unit"), list(sm["y_end"])))
+            if sm.get("magnitude") is not None:
+                extra_cols.append((f"{s_name}_Magnitude", None, list(sm["magnitude"])))
+
+        # Preserve Kaplan-Meier right-censored tick coordinates if non-empty
+        if layer.get("mark") == "km_step" and sm.get("censored_x"):
+            extra_cols.append((f"{s_name}_Censored_Time", s.get("x_unit"), list(sm["censored_x"])))
+            if sm.get("censored_y") is not None:
+                extra_cols.append((f"{s_name}_Censored_Survival", s.get("y_unit") or layer_unit, list(sm["censored_y"])))
 
         entries.append(
             {
@@ -1127,11 +1176,15 @@ def _extract_layer_series_entries(
                 "y_high": y_high,
                 "y_fit": y_fit,
                 "axis": s_axis,
-                "unit": s.get("unit") or layer_unit,
-                "x_label": s.get("x_label") or layer.get("x_label"),
+                "unit": s.get("unit") or s.get("y_unit") or layer_unit,
+                "x_label": eff_x_lbl,
                 "x_unit": s.get("x_unit") or layer.get("x_unit"),
+                "y_header_override": y_hdr_override,
+                "extra_cols": extra_cols,
+                "swap_depth_first": swap_depth,
+                "depth_label": sm.get("depth_label"),
                 "role": s.get("role"),
-                "metrics": s.get("metrics") or s.get("meta"),
+                "metrics": s.get("metrics") or sm,
             }
         )
     return entries
@@ -1268,18 +1321,448 @@ def _write_dataframe_sheet(ws: openpyxl.worksheet.worksheet.Worksheet, df: pd.Da
     _style_worksheet(ws)
 
 
+def _export_english_source_data_workbook(
+    wb: openpyxl.Workbook,
+    spec: Dict[str, Any],
+    panels: List[Dict[str, Any]],
+    summary_tables: Optional[Dict[str, pd.DataFrame]],
+    audit_notes: Optional[List[Any]],
+    out_p: Path,
+) -> str:
+    """
+    Export Nature / Science / Cell-compliant English Source-Data `.xlsx` workbook (`locale='en'`):
+    - `Raw_Data` (and `Raw_Data_<tag>` for additional panels)
+    - `Summary_Statistics`
+    - `Statistical_Tests` (when `stat_report` comparisons or omnibus tests exist)
+    - `Curve_Fit_Summary` (when `curve_fits` records exist)
+    - `Figure_Manifest`
+    """
+    fig_meta = spec.get("meta") if isinstance(spec.get("meta"), dict) else {}
+    stat_summary_rows: List[Dict[str, Any]] = []
+    stat_test_rows: List[Dict[str, Any]] = []
+    curve_fit_rows: List[Dict[str, Any]] = []
+    manifest_guide_rows: List[Dict[str, Any]] = []
+    fallback_summary_rows: List[Dict[str, Any]] = []
+    seen_stat_reports: set[int] = set()
+    seen_curve_fits: set[Tuple[str, str]] = set()
+
+    def _harvest_stat_report(panel_label: str, sr: Any, err_bar_type: str) -> None:
+        if not isinstance(sr, dict) or id(sr) in seen_stat_reports:
+            return
+        seen_stat_reports.add(id(sr))
+        omn_test = sr.get("omnibus_test", "none")
+        omn_stat = _excel_scalar(sr.get("omnibus_stat"))
+        omn_p = _excel_scalar(sr.get("omnibus_p"))
+        padj_m = str(sr.get("p_adjust_method", "fdr_bh"))
+
+        for s_row in sr.get("summary") or []:
+            if not isinstance(s_row, dict):
+                continue
+            stat_summary_rows.append(
+                {
+                    "Panel": panel_label,
+                    "Group": str(s_row.get("group", "")),
+                    "n": _excel_scalar(s_row.get("n")),
+                    "Mean": _excel_scalar(s_row.get("mean")),
+                    "SD": _excel_scalar(s_row.get("sd")),
+                    "SEM": _excel_scalar(s_row.get("sem")),
+                    "CI95_HalfWidth": _excel_scalar(s_row.get("ci95_half")),
+                    "Median": _excel_scalar(s_row.get("median")),
+                    "Q25": _excel_scalar(s_row.get("q25")),
+                    "Q75": _excel_scalar(s_row.get("q75")),
+                    "IQR": _excel_scalar(s_row.get("iqr")),
+                    "Min": _excel_scalar(s_row.get("min")),
+                    "Max": _excel_scalar(s_row.get("max")),
+                    "Shapiro_p": _excel_scalar(s_row.get("shapiro_p")),
+                    "Is_Normal": _excel_scalar(s_row.get("is_normal")),
+                    "Error_Bar_Type": err_bar_type or "SD",
+                }
+            )
+
+        comparisons = sr.get("comparisons") or []
+        if comparisons:
+            for c_row in comparisons:
+                if not isinstance(c_row, dict):
+                    continue
+                stat_test_rows.append(
+                    {
+                        "Panel": panel_label,
+                        "Group_1": str(c_row.get("group1", "")),
+                        "Group_2": str(c_row.get("group2", "")),
+                        "Test_Method": str(c_row.get("test", "")),
+                        "Statistic": _excel_scalar(c_row.get("statistic")),
+                        "df": _excel_scalar(c_row.get("df")),
+                        "p_raw": _excel_scalar(c_row.get("p_raw")),
+                        "p_adj": _excel_scalar(c_row.get("p_adj")),
+                        "p_adjust_method": padj_m,
+                        "Significance": str(c_row.get("stars", "")),
+                        "Significant": _excel_scalar(c_row.get("significant")),
+                        "Effect_Size": _excel_scalar(c_row.get("effect_size")),
+                        "Effect_Type": str(c_row.get("effect_type", "")),
+                        "Omnibus_Test": str(omn_test),
+                        "Omnibus_Statistic": omn_stat,
+                        "Omnibus_p": omn_p,
+                    }
+                )
+        elif omn_test and str(omn_test).lower() != "none":
+            stat_test_rows.append(
+                {
+                    "Panel": panel_label,
+                    "Group_1": "All_Groups",
+                    "Group_2": "All_Groups",
+                    "Test_Method": str(omn_test),
+                    "Statistic": omn_stat,
+                    "df": None,
+                    "p_raw": omn_p,
+                    "p_adj": omn_p,
+                    "p_adjust_method": padj_m,
+                    "Significance": "",
+                    "Significant": bool(omn_p is not None and omn_p < 0.05),
+                    "Effect_Size": None,
+                    "Effect_Type": "",
+                    "Omnibus_Test": str(omn_test),
+                    "Omnibus_Statistic": omn_stat,
+                    "Omnibus_p": omn_p,
+                }
+            )
+
+    def _harvest_curve_fits(panel_label: str, cf_list: Any) -> None:
+        if not isinstance(cf_list, list):
+            return
+        for cf in cf_list:
+            if not isinstance(cf, dict):
+                continue
+            nm = str(cf.get("name", "Series"))
+            mdl = str(cf.get("model", ""))
+            dedup_key = (panel_label, f"{nm}::{mdl}")
+            if dedup_key in seen_curve_fits:
+                continue
+            seen_curve_fits.add(dedup_key)
+            km = cf.get("key_metrics") if isinstance(cf.get("key_metrics"), dict) else {}
+            params = cf.get("params") if isinstance(cf.get("params"), dict) else {}
+            pse = cf.get("param_se") if isinstance(cf.get("param_se"), dict) else {}
+            param_str = "; ".join(f"{k}={float(v):.6g}" for k, v in params.items() if isinstance(v, (int, float)))
+            se_str = "; ".join(f"{k}={float(v):.6g}" for k, v in pse.items() if isinstance(v, (int, float)))
+            rec: Dict[str, Any] = {
+                "Panel": panel_label,
+                "Series": nm,
+                "Model": mdl,
+                "Equation": str(cf.get("equation_text") or cf.get("equation_str") or ""),
+                "R2": _excel_scalar(cf.get("r2")),
+                "Adj_R2": _excel_scalar(cf.get("adj_r2")),
+                "RMSE": _excel_scalar(cf.get("rmse")),
+                "AIC": _excel_scalar(cf.get("aic")),
+                "BIC": _excel_scalar(cf.get("bic")),
+            }
+            for k_m, v_m in km.items():
+                rec[str(k_m)] = _excel_scalar(v_m)
+            for k_p, v_p in params.items():
+                if str(k_p) not in rec:
+                    rec[f"Param_{k_p}"] = _excel_scalar(v_p)
+            rec["Parameters"] = param_str
+            rec["Parameter_SE"] = se_str
+            curve_fit_rows.append(rec)
+
+    fig_err_type = str(fig_meta.get("error_bar_type", ""))
+    at_risk_tables: List[Tuple[str, Dict[str, Any]]] = []
+    if fig_meta.get("stat_report"):
+        _harvest_stat_report("Figure", fig_meta["stat_report"], fig_err_type)
+    if isinstance(fig_meta.get("statistical_tests"), list):
+        for st_r in fig_meta["statistical_tests"]:
+            if isinstance(st_r, dict):
+                stat_test_rows.append({str(k): _excel_scalar(v) for k, v in st_r.items()})
+    if fig_meta.get("curve_fits"):
+        _harvest_curve_fits("Figure", fig_meta["curve_fits"])
+    if isinstance(fig_meta.get("at_risk_table"), dict):
+        at_risk_tables.append(("Figure", fig_meta["at_risk_table"]))
+
+    for p_idx, panel in enumerate(panels):
+        tag = str(panel.get("tag") or panel.get("panel_id") or panel.get("id") or chr(ord("a") + p_idx)).strip()
+        p_name = str(panel.get("title") or panel.get("name") or spec.get("title") or f"Panel_{tag}").strip()
+        panel_display = f"({tag}) {p_name}"
+        p_meta = panel.get("meta") if isinstance(panel.get("meta"), dict) else {}
+
+        if p_meta.get("stat_report"):
+            # Dedup by content if figure-level already harvested identical summary/comparisons
+            if not stat_summary_rows:
+                _harvest_stat_report(panel_display, p_meta["stat_report"], str(p_meta.get("error_bar_type") or fig_err_type))
+        if isinstance(p_meta.get("statistical_tests"), list) and not stat_test_rows:
+            for st_r in p_meta["statistical_tests"]:
+                if isinstance(st_r, dict):
+                    stat_test_rows.append({str(k): _excel_scalar(v) for k, v in st_r.items()})
+        if isinstance(p_meta.get("at_risk_table"), dict) and not at_risk_tables:
+            at_risk_tables.append((panel_display, p_meta["at_risk_table"]))
+        if p_meta.get("curve_fits") and not curve_fit_rows:
+            _harvest_curve_fits(panel_display, p_meta["curve_fits"])
+
+        for g in panel.get("guides") or []:
+            if isinstance(g, dict):
+                manifest_guide_rows.append(
+                    {
+                        "Panel": panel_display,
+                        "Guide_Kind": str(g.get("kind", "guide")),
+                        "Label": str(g.get("label", "")),
+                        "X_or_X1": _excel_scalar(g.get("x", g.get("x1"))),
+                        "X2": _excel_scalar(g.get("x2", g.get("x_end"))),
+                        "Value_or_Y": _excel_scalar(g.get("value", g.get("y", g.get("y_bar")))),
+                    }
+                )
+
+        axes_meta = _extract_panel_axes_meta(panel)
+        x_ax_dict = panel.get("x_axis") if isinstance(panel.get("x_axis"), dict) else {}
+        panel_cats = panel.get("categories") or p_meta.get("categories") or x_ax_dict.get("categories")
+        raw_layers = panel.get("layers")
+        layers = [ly for ly in raw_layers if isinstance(ly, dict)] if isinstance(raw_layers, list) and raw_layers else [panel]
+
+        raw_sheet_name = "Raw_Data" if p_idx == 0 else _unique_sheet_title(wb, f"Raw_Data_{tag}")
+        ws_raw = wb.create_sheet(title=_unique_sheet_title(wb, raw_sheet_name))
+
+        # Specialized structured Raw_Data layouts for replicate distributions, volcano plots, and forest plots
+        replicate_groups: List[Tuple[str, List[Any]]] = []
+        volcano_rows: List[List[Any]] = []
+        forest_items = p_meta.get("forest_items") if isinstance(p_meta.get("forest_items"), list) else None
+        rds_items = p_meta.get("rds_summary") if isinstance(p_meta.get("rds_summary"), list) else None
+
+        for ly in layers:
+            for s in ly.get("series") or []:
+                if not isinstance(s, dict):
+                    continue
+                sm = s.get("meta") if isinstance(s.get("meta"), dict) else {}
+                if isinstance(sm.get("raw_points"), list) and sm["raw_points"]:
+                    replicate_groups.append((str(s.get("name", "Group")), list(sm["raw_points"])))
+                elif isinstance(sm.get("point_labels"), list) and s.get("x") and s.get("y"):
+                    reg = str(sm.get("regulation") or s.get("name") or "")
+                    for lbl_v, xv, yv in zip(sm["point_labels"], s["x"], s["y"]):
+                        volcano_rows.append([str(lbl_v), reg, _excel_scalar(xv), _excel_scalar(yv)])
+
+        if replicate_groups:
+            y_unit = axes_meta["y1"]["unit"]
+            max_n = max(len(vals) for _, vals in replicate_groups)
+            headers = ["Replicate_Index"] + [_format_col_header(gn, y_unit) for gn, _ in replicate_groups]
+            ws_raw.append(headers)
+            for r_i in range(max_n):
+                row_r: List[Any] = [r_i + 1]
+                for _, vals in replicate_groups:
+                    row_r.append(_excel_scalar(vals[r_i]) if r_i < len(vals) else None)
+                ws_raw.append(row_r)
+            _style_worksheet(ws_raw)
+        elif volcano_rows:
+            x_hdr = _format_col_header(axes_meta["x"]["label"] or "log2_Fold_Change", axes_meta["x"]["unit"])
+            y_hdr = _format_col_header(axes_meta["y1"]["label"] or "neg_log10_p", axes_meta["y1"]["unit"])
+            ws_raw.append(["Feature_ID", "Regulation", x_hdr, y_hdr])
+            for vr in volcano_rows:
+                ws_raw.append(vr)
+            _style_worksheet(ws_raw)
+            v_sum = p_meta.get("volcano_summary")
+            if isinstance(v_sum, dict):
+                for bk in ("Up", "Down", "NS"):
+                    if f"n_{bk.lower()}" in v_sum or bk in v_sum:
+                        fallback_summary_rows.append(
+                            {
+                                "Panel": panel_display,
+                                "Category": bk,
+                                "Count": _excel_scalar(v_sum.get(f"n_{bk.lower()}", v_sum.get(bk))),
+                                "FC_Cutoff": _excel_scalar(v_sum.get("fc_cutoff")),
+                                "p_Cutoff": _excel_scalar(v_sum.get("p_cutoff")),
+                            }
+                        )
+        elif forest_items:
+            x_hdr = _format_col_header(axes_meta["x"]["label"] or "Estimate", axes_meta["x"]["unit"])
+            ws_raw.append(["Item", x_hdr, "CI95_Low", "CI95_High", "Formatted_95CI", "p_value"])
+            for fi in forest_items:
+                if isinstance(fi, dict):
+                    ws_raw.append(
+                        [
+                            str(fi.get("name", "")),
+                            _excel_scalar(fi.get("estimate")),
+                            _excel_scalar(fi.get("ci_low")),
+                            _excel_scalar(fi.get("ci_high")),
+                            str(fi.get("formatted_ci", "")),
+                            _excel_scalar(fi.get("p_value")),
+                        ]
+                    )
+                    fallback_summary_rows.append(
+                        {
+                            "Panel": panel_display,
+                            "Item": str(fi.get("name", "")),
+                            "Estimate": _excel_scalar(fi.get("estimate")),
+                            "CI95_Low": _excel_scalar(fi.get("ci_low")),
+                            "CI95_High": _excel_scalar(fi.get("ci_high")),
+                            "Formatted_95CI": str(fi.get("formatted_ci", "")),
+                        }
+                    )
+            _style_worksheet(ws_raw)
+        else:
+            all_1d_entries: List[Dict[str, Any]] = []
+            matrix_layers: List[Dict[str, Any]] = []
+            for ly in layers:
+                has_mat = any(ly.get(mk) is not None for mk in ("matrix_z", "z_matrix")) or (
+                    ly.get("values") is not None and np.asarray(ly.get("values")).ndim == 2
+                )
+                if has_mat:
+                    matrix_layers.append(ly)
+                all_1d_entries.extend(_extract_layer_series_entries(ly, default_axis="y1", panel_categories=panel_cats))
+
+            used_axes = {e["axis"] for e in all_1d_entries}
+            has_dual_y = ("y1" in used_axes and "y2" in used_axes) or bool(axes_meta["y2"]["label"] and "y2" in used_axes)
+            if all_1d_entries:
+                _write_1d_series_to_sheet(
+                    ws_raw,
+                    all_1d_entries,
+                    axes_meta=axes_meta,
+                    has_dual_y=has_dual_y,
+                    panel_categories=panel_cats,
+                )
+                if matrix_layers:
+                    ws_mat_bg = wb.create_sheet(title=_unique_sheet_title(wb, f"{raw_sheet_name}_Matrix"))
+                    _write_2d_matrix_to_sheet(ws_mat_bg, matrix_layers[0], axes_meta=axes_meta)
+                for ent in all_1d_entries:
+                    arr = np.asarray(ent["y"], dtype=float)
+                    arr = arr[np.isfinite(arr)]
+                    if arr.size > 0:
+                        ent_meta = ent.get("metrics") if isinstance(ent.get("metrics"), dict) else {}
+                        sum_rec: Dict[str, Any] = {
+                            "Panel": panel_display,
+                            "Series": str(ent["name"]),
+                            "n_points": int(arr.size),
+                            "Mean": _excel_scalar(np.mean(arr)),
+                            "SD": _excel_scalar(np.std(arr, ddof=1) if arr.size > 1 else 0.0),
+                            "Min": _excel_scalar(np.min(arr)),
+                            "Max": _excel_scalar(np.max(arr)),
+                        }
+                        if ent_meta.get("median_survival") is not None or ent_meta.get("n_events") is not None:
+                            sum_rec["Median_Survival"] = _excel_scalar(ent_meta.get("median_survival"))
+                            sum_rec["Events"] = _excel_scalar(ent_meta.get("n_events"))
+                            sum_rec["Censored"] = _excel_scalar(ent_meta.get("n_censored"))
+                        if ent_meta.get("auroc") is not None:
+                            sum_rec["AUROC"] = _excel_scalar(ent_meta.get("auroc"))
+                            sum_rec["CI95_Low"] = _excel_scalar(ent_meta.get("ci_low"))
+                            sum_rec["CI95_High"] = _excel_scalar(ent_meta.get("ci_high"))
+                        fallback_summary_rows.append(sum_rec)
+            elif matrix_layers:
+                _write_2d_matrix_to_sheet(ws_raw, matrix_layers[0], axes_meta=axes_meta)
+            else:
+                ws_raw.append(["Panel", "Note"])
+                ws_raw.append([panel_display, "No raw data attached"])
+                _style_worksheet(ws_raw)
+
+        if rds_items:
+            for rds in rds_items:
+                if isinstance(rds, dict):
+                    fallback_summary_rows.append(
+                        {
+                            "Panel": panel_display,
+                            "Pathway": str(rds.get("pathway", "")),
+                            "RDS_Step_From": str(rds.get("step_from", "")),
+                            "RDS_Step_To": str(rds.get("step_to", "")),
+                            "G_From_eV": _excel_scalar(rds.get("g_from")),
+                            "G_To_eV": _excel_scalar(rds.get("g_to")),
+                            "Delta_G_RDS_eV": _excel_scalar(rds.get("delta_g_max")),
+                        }
+                    )
+
+    # 2. Summary_Statistics
+    ws_sum = wb.create_sheet(title=_unique_sheet_title(wb, "Summary_Statistics"))
+    rows_for_sum = stat_summary_rows if stat_summary_rows else fallback_summary_rows
+    if rows_for_sum:
+        sum_headers: List[str] = []
+        for r in rows_for_sum:
+            for k in r.keys():
+                if k not in sum_headers:
+                    sum_headers.append(k)
+        ws_sum.append(sum_headers)
+        for r in rows_for_sum:
+            ws_sum.append([r.get(k) for k in sum_headers])
+    else:
+        ws_sum.append(["Title", "Mode", "Note"])
+        ws_sum.append([str(spec.get("title", "")), str(spec.get("mode", "")), "Summary statistics not applicable"])
+    _style_worksheet(ws_sum)
+
+    # 3. Statistical_Tests (emitted whenever stat_report / test rows exist)
+    if stat_test_rows:
+        ws_tests = wb.create_sheet(title=_unique_sheet_title(wb, "Statistical_Tests"))
+        test_headers: List[str] = []
+        for tr in stat_test_rows:
+            for k in tr.keys():
+                if k not in test_headers:
+                    test_headers.append(k)
+        ws_tests.append(test_headers)
+        for tr in stat_test_rows:
+            ws_tests.append([tr.get(k) for k in test_headers])
+        _style_worksheet(ws_tests)
+
+    # 3b. At_Risk_Table (for Kaplan-Meier survival cohorts)
+    for _ar_lbl, ar_tbl in at_risk_tables:
+        ar_times = ar_tbl.get("times")
+        ar_rows = ar_tbl.get("rows")
+        if isinstance(ar_times, list) and isinstance(ar_rows, list) and ar_times and ar_rows:
+            ws_ar = wb.create_sheet(title=_unique_sheet_title(wb, "At_Risk_Table"))
+            ws_ar.append(["Arm"] + [f"t={_excel_scalar(tv)}" for tv in ar_times])
+            for ar_r in ar_rows:
+                if isinstance(ar_r, dict):
+                    ws_ar.append([str(ar_r.get("name", "Arm"))] + [_excel_scalar(c) for c in (ar_r.get("counts") or [])])
+            _style_worksheet(ws_ar)
+
+    # 4. Curve_Fit_Summary (emitted whenever curve_fits records exist)
+    if curve_fit_rows:
+        ws_cf = wb.create_sheet(title=_unique_sheet_title(wb, "Curve_Fit_Summary"))
+        cf_headers: List[str] = []
+        for cr in curve_fit_rows:
+            for k in cr.keys():
+                if k not in cf_headers:
+                    cf_headers.append(k)
+        ws_cf.append(cf_headers)
+        for cr in curve_fit_rows:
+            ws_cf.append([cr.get(k) for k in cf_headers])
+        _style_worksheet(ws_cf)
+
+    # 5. Optional caller-provided summary DataFrames
+    if summary_tables:
+        for tbl_name, df_tbl in summary_tables.items():
+            if isinstance(df_tbl, pd.DataFrame) and not df_tbl.empty:
+                ws_t = wb.create_sheet(title=_unique_sheet_title(wb, tbl_name))
+                _write_dataframe_sheet(ws_t, df_tbl)
+
+    # 6. Figure_Manifest
+    ws_man = wb.create_sheet(title=_unique_sheet_title(wb, "Figure_Manifest"))
+    ws_man.append(["Field", "Value", "Extra_1", "Extra_2", "Extra_3"])
+    ws_man.append(["Figure_Title", str(spec.get("title", "")), None, None, None])
+    ws_man.append(["Chart_Mode", str(spec.get("mode", "")), str(spec.get("subtype") or ""), None, None])
+    ws_man.append(["Style_Preset", str(spec.get("style_preset", "")), None, None, None])
+    ws_man.append(["Locale", "en", f"Panels={len(panels)}", fig_err_type or None, None])
+    for gr in manifest_guide_rows:
+        ws_man.append(
+            [
+                f"Guide ({gr['Panel']})",
+                gr["Guide_Kind"],
+                gr["Label"],
+                gr["X_or_X1"],
+                gr["Value_or_Y"],
+            ]
+        )
+    if audit_notes:
+        for n_i, note in enumerate(audit_notes, start=1):
+            note_txt = note.get("note", str(note)) if isinstance(note, dict) else str(note)
+            ws_man.append([f"Audit_Note_{n_i}", note_txt, None, None, None])
+    _style_worksheet(ws_man)
+
+    return _safe_save_wb(wb, out_p)
+
+
 def export_multi_chart_workbook(
     figure_spec_dict: Dict[str, Any],
     out_xlsx: str | Path,
     summary_tables: Optional[Dict[str, pd.DataFrame]] = None,
     audit_notes: Optional[List[str]] = None,
+    locale: Optional[str] = None,
 ) -> str:
     """
     Export a publication-ready multi-sheet Source Data `.xlsx` workbook from a Chart Grammar `FigureSpec`
     (dict or Dataclass):
-    - Covers categorical columns, value columns, error (`y_err`) & band columns, `[Left-Y]` / `[Right-Y]`
-      dual-axis badges, units in headers, 2D contour/pseudocolor matrices, linked 1D side panels, inset subcharts,
-      pulse voltage decomposition / `dQ/dV` feature metrics, custom `summary_tables`, and `audit_notes`.
+    - When `locale='en'` (or `fig_spec.meta.get('locale') == 'en'`), outputs Nature/Science/Cell-compliant
+      English tabs (`Raw_Data`, `Summary_Statistics`, `Statistical_Tests`, `Curve_Fit_Summary`, `Figure_Manifest`).
+    - When `locale='zh'` (default for legacy material sheets), preserves 100% backward-compatible Chinese
+      panel/kinetics/guide/audit sheets.
     """
     spec = _to_plain_dict(figure_spec_dict)
     if not isinstance(spec, dict):
@@ -1297,6 +1780,21 @@ def export_multi_chart_workbook(
     else:
         panels = [spec]
 
+    resolved_locale = str(locale or "").strip().lower()
+    if not resolved_locale:
+        spec_meta = spec.get("meta") if isinstance(spec.get("meta"), dict) else {}
+        cand_loc = spec_meta.get("locale") or spec.get("locale")
+        if not cand_loc:
+            for p_chk in panels:
+                pm_chk = p_chk.get("meta") if isinstance(p_chk.get("meta"), dict) else {}
+                if pm_chk.get("locale"):
+                    cand_loc = pm_chk.get("locale")
+                    break
+        resolved_locale = str(cand_loc or "zh").strip().lower()
+
+    if resolved_locale.startswith("en"):
+        return _export_english_source_data_workbook(wb, spec, panels, summary_tables, audit_notes, out_p)
+
     kinetics_rows: List[Dict[str, Any]] = []
     guide_rows: List[Dict[str, Any]] = []
     _collect_feature_and_guide_rows("Figure", spec, kinetics_rows, guide_rows)
@@ -1308,7 +1806,9 @@ def export_multi_chart_workbook(
         panel_display = f"({tag}) {p_name}"
 
         axes_meta = _extract_panel_axes_meta(panel)
-        panel_cats = panel.get("categories")
+        p_meta_zh = panel.get("meta") if isinstance(panel.get("meta"), dict) else {}
+        x_ax_dict = panel.get("x_axis") if isinstance(panel.get("x_axis"), dict) else {}
+        panel_cats = panel.get("categories") or p_meta_zh.get("categories") or x_ax_dict.get("categories")
         _collect_feature_and_guide_rows(panel_display, panel, kinetics_rows, guide_rows)
 
         # Gather layers (supporting explicit `layers`, legacy `left_y`/`right_y`, or direct panel fields)
@@ -1436,6 +1936,33 @@ def export_multi_chart_workbook(
         for gr in guide_rows:
             ws_g.append([gr.get(k) for k in g_headers])
         _style_worksheet(ws_g)
+
+    # 6b. Export survival At-Risk table & statistical tests in Chinese workbook when present
+    spec_meta_zh = spec.get("meta") if isinstance(spec.get("meta"), dict) else {}
+    ar_zh = spec_meta_zh.get("at_risk_table")
+    if isinstance(ar_zh, dict) and isinstance(ar_zh.get("times"), list) and isinstance(ar_zh.get("rows"), list):
+        ws_ar_zh = wb.create_sheet(title=_unique_sheet_title(wb, "风险集人数表_AtRisk"))
+        ws_ar_zh.append(["组别 (Arm)"] + [f"t={_excel_scalar(tv)}" for tv in ar_zh["times"]])
+        for ar_r in ar_zh["rows"]:
+            if isinstance(ar_r, dict):
+                ws_ar_zh.append([str(ar_r.get("name", "Arm"))] + [_excel_scalar(c) for c in (ar_r.get("counts") or [])])
+        _style_worksheet(ws_ar_zh)
+
+    st_zh = spec_meta_zh.get("statistical_tests")
+    if isinstance(st_zh, list) and st_zh:
+        ws_st_zh = wb.create_sheet(title=_unique_sheet_title(wb, "统计检验与ROC生存汇总"))
+        st_hdrs: List[str] = []
+        for sr_i in st_zh:
+            if isinstance(sr_i, dict):
+                for k in sr_i.keys():
+                    if k not in st_hdrs:
+                        st_hdrs.append(k)
+        if st_hdrs:
+            ws_st_zh.append(st_hdrs)
+            for sr_i in st_zh:
+                if isinstance(sr_i, dict):
+                    ws_st_zh.append([_excel_scalar(sr_i.get(k)) for k in st_hdrs])
+            _style_worksheet(ws_st_zh)
 
     # 7. Export caller-provided summary DataFrames
     if summary_tables:
