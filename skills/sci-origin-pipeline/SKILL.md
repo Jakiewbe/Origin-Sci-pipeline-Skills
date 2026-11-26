@@ -76,7 +76,7 @@ description: >-
     - `bar_grouped_gradient`：单指标多样品或簇状分组统一浅彩实色柱 + `1.5 pt` 同系深色描边 + SD 误差棒 + 柱顶数值标签（`24 pt` 分类 X 标签长词自动 `30°` 斜排）
     - `bar_stacked` / `bar_stacked_100pct`：绝对值堆积柱 / 100% 归一化百分比堆积柱（浅彩实色分层 + `1.5 pt` 深色描边；`ylim=(0,128)` 留出框内图注白区且刻度严格截断于 `0..100`）
     - `dual_y_combo`：通用双 Y 轴复合图（如左轴 100% 堆积柱 + 右轴 `-k 2` 纯 2D 圆点线元素含量，全高零点对齐 + 右轴语义染色 + 框内顶部双行无框图注）
-    - `curve_with_inset`：主曲线簇 + 局部放大 `zoom` 或独立 `subchart` 内插图（支持 Nyquist `equal_aspect` 1:1 `4.50×4.50 in` 正方形锁定、纯白不透明内插底色与虚线 ZoomBox 导引线）
+    - `curve_with_inset`：主曲线簇 + 局部放大 `zoom` 或独立 `subchart` 内插图（支持 Nyquist `equal_aspect` 在标准 `6.40×4.80 in` `4:3` 画框内按 `4:3` 欧姆跨度实现 1:1 物理正圆阻抗弧、纯白不透明 `4:3` 内插底色与虚线 ZoomBox 导引线）
     - `electrochem_kinetics`：统一电化学动力学模式，含子类型 `pulse_align`（短脉冲归零对齐 + $\Delta V_{0,\text{app}} / \Delta V_{\text{slow,app}}$ 跨度标注）、`galvanostatic_dqdv`（恒流充放电 + Savitzky-Golay `dQ/dV` 联图）、`ragone`（双对数能量–功率密度图）
     - `contour_pseudocolor_2d`：二维连续伪彩云图（260×260 双线性平滑插值、零本底纯白蓝红连续色阶、右侧等高 64 色带原生 `GLayer` 色标尺，彻底杜绝宋体与胶囊框残留）
     - `chart_grammar`：多面板不等宽网格（`nrows/ncols/width_ratios`）与任意多图层叠加的通用声明式入口

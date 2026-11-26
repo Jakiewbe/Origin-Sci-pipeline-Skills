@@ -91,8 +91,9 @@ def _line_style_code(style_name: str) -> int:
 
 def _marker_cmd_and_interior(marker_style: str) -> Tuple[Optional[int], int]:
     """
-    Map declarative marker names to Origin `-k <shape>` and `Plot.symbol_interior` (`1=Solid`, `2=Open`).
-    All legacy `sphere_3d` requests map to pure 2D circles (`-k 2`, `interior=1`) for unified crisp vector/print output.
+    Map declarative marker names to `(shape_code, fill_mode)` (`shape_code`: `1=Sq, 2=Circle, 3=UpTri, 4=DownTri, 5=Diamond`;
+    `fill_mode`: `1=Solid`, `2=Open`). Note: Origin's `Plot.symbol_interior` (`SetNumProp('symbol.interior')`) uses 0-based
+    Origin C codes (`0=Solid ●`, `1=Open white-fill ○`), NOT LabTalk `-kf`'s 1-based codes.
     """
     m = str(marker_style or "none").strip().lower()
     if m in ("none", "", "false"):
@@ -172,6 +173,74 @@ def _apply_dp_gradient_and_label_raw(
     dp_obj.Theme = tr
 
 
+def _resolve_1d_equal_aspect_bounds_and_step(
+    panel: cg.PanelSpec,
+    xs: Sequence[float],
+    ys: Sequence[float],
+    target_ratio: float = 4.0 / 3.0,
+) -> Tuple[Tuple[float, float], Tuple[float, float], Optional[float]]:
+    """
+    Resolve isometric `X_span : Y_span == target_ratio` (`4:3` on standard `6.40 x 4.80 in` frame) bounds
+    and shared `major_step` for 1D `panel.equal_aspect=True` charts (EIS Nyquist).
+    - Auto-infer (`limits is None`): `(0, 4*step)` x `(0, 3*step)` with shared `step`.
+    - Explicit `4:3` limits (within 2%): preserve exact `limits` and `major_step`.
+    - Legacy square `(0, L)` x `(0, L)` or non-`4:3` limits: adapt cleanly to `4:3` without clipping any data point.
+    """
+    x_lim_in = panel.x_axis.limits
+    y_lim_in = panel.y1_axis.limits
+    user_step = panel.x_axis.major_step or panel.y1_axis.major_step
+
+    if x_lim_in is None and y_lim_in is None:
+        if abs(target_ratio - (4.0 / 3.0)) <= 0.03:
+            xb, yb, st = cg.compute_isometric_4_3_bounds(xs, ys)
+            return xb, yb, (float(user_step) if (user_step and user_step > 0) else st)
+        max_v = max(max(xs, default=1.0), max(ys, default=1.0)) * 1.10
+        st = ob.compute_nice_linear_step(0.0, max_v, max_ticks=5) or 1.0
+        top = math.ceil(max_v / st) * st
+        return (0.0, top * target_ratio), (0.0, top), st
+
+    if x_lim_in is not None:
+        x0, x1 = float(min(x_lim_in)), float(max(x_lim_in))
+    else:
+        x0, x1 = 0.0, max(float(max(xs, default=1.0)) * 1.08, 1.0)
+    if y_lim_in is not None:
+        y0, y1 = float(min(y_lim_in)), float(max(y_lim_in))
+    else:
+        y0, y1 = 0.0, max(float(max(ys, default=1.0)) * 1.08, 1.0)
+
+    dx = max(x1 - x0, 1e-9)
+    dy = max(y1 - y0, 1e-9)
+    if abs((dx / dy) - target_ratio) <= 0.02 * target_ratio:
+        st_keep = float(user_step) if (user_step and user_step > 0) else ob.compute_nice_linear_step(x0, x1, max_ticks=5)
+        return (x0, x1), (y0, y1), st_keep
+
+    # Adapt legacy square or non-4:3 limits to exact `target_ratio` without clipping any data point
+    max_all_x = float(max(xs)) if xs else x1
+    max_all_y = float(max(ys)) if ys else y1
+    if abs(target_ratio - (4.0 / 3.0)) <= 0.03 and abs(x0) < 1e-9 and abs(y0) < 1e-9:
+        # Check if `(0, x1)` x `(0, 0.75 * x1)` fits all data cleanly without clipping
+        if ys and max_all_x <= x1 and max_all_y <= 0.75 * x1 * 0.96 and (x1 / 4.0) in cg.ISO_4_3_STEPS:
+            st = x1 / 4.0
+            return (0.0, round(4.0 * st, 6)), (0.0, round(3.0 * st, 6)), st
+        if (4.0 / 3.0) * y1 + 1e-9 >= x1 and (y1 / 3.0) in cg.ISO_4_3_STEPS:
+            st = y1 / 3.0
+            return (0.0, round(4.0 * st, 6)), (0.0, round(3.0 * st, 6)), st
+        st = cg.pick_iso_4_3_step(x1, y1)
+        return (0.0, round(4.0 * st, 6)), (0.0, round(3.0 * st, 6)), st
+
+    if dx / dy < target_ratio:
+        new_x1 = x0 + target_ratio * dy
+        st = ob.compute_nice_linear_step(x0, new_x1, max_ticks=5)
+        return (x0, new_x1), (y0, y1), st
+    if ys and max_all_y <= y0 + (dx / target_ratio) * 0.98:
+        new_y1 = y0 + (dx / target_ratio)
+        st = ob.compute_nice_linear_step(x0, x1, max_ticks=5)
+        return (x0, x1), (y0, new_y1), st
+    new_x1 = x0 + target_ratio * dy
+    st = ob.compute_nice_linear_step(x0, new_x1, max_ticks=5)
+    return (x0, new_x1), (y0, y1), st
+
+
 def _infer_panel_xy_bounds(
     panel: cg.PanelSpec,
     y_axis_filter: str = "y1",
@@ -245,6 +314,17 @@ def _infer_panel_xy_bounds(
 
     has_2d_mat = any(ly.mark in ("contour_pseudocolor", "matrix_heatmap") for ly in panel.layers)
     has_stat_any = any(ly.mark in ("stat_distribution", "stat_box_jitter") for ly in panel.layers)
+    if (
+        panel.equal_aspect
+        and not has_2d_mat
+        and not has_stat_any
+        and y_axis_filter == "y1"
+        and panel.x_axis.scale != "log10"
+        and panel.y1_axis.scale != "log10"
+    ):
+        eq_xb, eq_yb, _ = _resolve_1d_equal_aspect_bounds_and_step(panel, xs, ys)
+        return eq_xb, eq_yb
+
     if panel.x_axis.limits is not None:
         x_bounds = (float(min(panel.x_axis.limits)), float(max(panel.x_axis.limits)))
     elif (panel.x_axis.axis_kind == "categorical" and panel.x_axis.categories) or has_stat_any:
@@ -1135,17 +1215,18 @@ def _apply_single_axis_layer_style(
     tgt_wh = ob._PAGE_TARGET_INCHES.get(gp.name, (float(spec["page_rect_w_in"]), float(spec["page_rect_h_in"])))
     pw_in, ph_in = tgt_wh
 
+    has_2d_mat = any(ly.mark in ("contour_pseudocolor", "matrix_heatmap") for ly in panel.layers)
     if rect_in is not None:
         li, ti, wi, hi = rect_in
         gl.lt_exec(f"layer.unit=2; layer.left={li}; layer.top={ti}; layer.width={wi}; layer.height={hi};")
         lw_in, lh_in = float(wi), float(hi)
-    elif rect_pct is not None and not panel.equal_aspect:
+    elif rect_pct is not None and not (has_2d_mat and panel.equal_aspect):
         l_p, t_p, w_p, h_p = rect_pct
         gl.lt_exec(f"layer.unit=1; layer.left={l_p}; layer.top={t_p}; layer.width={w_p}; layer.height={h_p};")
         lw_in, lh_in = pw_in * (float(w_p) / 100.0), ph_in * (float(h_p) / 100.0)
     else:
-        lw_in = float(spec["box_sq_side_in"] if panel.equal_aspect else spec["box_rect_w_in"])
-        lh_in = float(spec["box_sq_side_in"] if panel.equal_aspect else spec["box_rect_h_in"])
+        lw_in = float(spec["box_sq_side_in"] if has_2d_mat else spec["box_rect_w_in"])
+        lh_in = float(spec["box_sq_side_in"] if has_2d_mat else spec["box_rect_h_in"])
 
     raw_bt = float(panel.box_linewidth_pt or spec["box_lw_pt"])
     bt = float(spec["box_lw_pt"]) if abs(raw_bt - 3.0) < 0.05 else raw_bt
@@ -1203,42 +1284,65 @@ def _apply_single_axis_layer_style(
     )
     cats = _extract_panel_categories(panel) if is_cat_x else []
 
-    if x_ax.limits is not None:
-        x0, x1 = float(x_ax.limits[0]), float(x_ax.limits[1])
-        if x_ax.invert and x0 < x1:
-            gl.set_xlim(x1, x0)
-        else:
-            gl.set_xlim(x0, x1)
-        x_bounds = (min(x0, x1), max(x0, x1))
-    elif is_cat_x and cats:
-        x_bounds = (0.4, float(len(cats)) + 0.6)
-        gl.set_xlim(x_bounds[0], x_bounds[1])
-        gl.lt_exec(f"layer.x.from={x_bounds[0]}; layer.x.to={x_bounds[1]}; layer.x.inc=1;")
-    elif x_ax.invert:
-        gl.set_xlim(x_bounds[1], x_bounds[0])
-    else:
-        gl.set_xlim(x_bounds[0], x_bounds[1])
-
-    if y_ax.limits is not None and not reserve_top_legend_space:
-        gl.set_ylim(float(y_ax.limits[0]), float(y_ax.limits[1]))
-        y_bounds = (float(min(y_ax.limits)), float(max(y_ax.limits)))
-    else:
+    is_1d_eq = panel.equal_aspect and not has_2d_mat and not is_cat_x and not x_is_log and not y_is_log
+    eq_step_resolved: Optional[float] = None
+    if is_1d_eq:
+        xs_eq = [
+            float(xv)
+            for ly in panel.layers
+            if ly.y_axis == "y1"
+            for s in ly.series
+            for xv in (s.x or [])
+            if isinstance(xv, (int, float)) and not isinstance(xv, bool)
+        ]
+        ys_eq = [float(yv) for ly in panel.layers if ly.y_axis == "y1" for s in ly.series for yv in (s.y or [])]
+        tgt_ratio = lw_in / max(lh_in, 1e-6)
+        x_bounds, y_bounds, eq_step_resolved = _resolve_1d_equal_aspect_bounds_and_step(
+            panel, xs_eq, ys_eq, target_ratio=tgt_ratio
+        )
+        x_from, x_to = (x_bounds[1], x_bounds[0]) if x_ax.invert else (x_bounds[0], x_bounds[1])
+        gl.set_xlim(x_from, x_to)
         gl.set_ylim(y_bounds[0], y_bounds[1])
+        gl.lt_exec(f"layer.x.from={x_from}; layer.x.to={x_to}; layer.y.from={y_bounds[0]}; layer.y.to={y_bounds[1]};")
+        if eq_step_resolved is not None and eq_step_resolved > 0:
+            gl.lt_exec(f"layer.x.inc={eq_step_resolved}; layer.y.inc={eq_step_resolved};")
+    else:
+        if x_ax.limits is not None:
+            x0, x1 = float(x_ax.limits[0]), float(x_ax.limits[1])
+            if x_ax.invert and x0 < x1:
+                gl.set_xlim(x1, x0)
+            else:
+                gl.set_xlim(x0, x1)
+            x_bounds = (min(x0, x1), max(x0, x1))
+        elif is_cat_x and cats:
+            x_bounds = (0.4, float(len(cats)) + 0.6)
+            gl.set_xlim(x_bounds[0], x_bounds[1])
+            gl.lt_exec(f"layer.x.from={x_bounds[0]}; layer.x.to={x_bounds[1]}; layer.x.inc=1;")
+        elif x_ax.invert:
+            gl.set_xlim(x_bounds[1], x_bounds[0])
+        else:
+            gl.set_xlim(x_bounds[0], x_bounds[1])
 
-    max_auto_tks = 5 if panel.equal_aspect else 6
-    if x_ax.major_step is not None and x_ax.major_step > 0:
-        gl.lt_exec(f"layer.x.inc={float(x_ax.major_step)};")
-    elif not is_cat_x and not x_is_log and not has_2d_mat:
-        auto_xs = ob.compute_nice_linear_step(x_bounds[0], x_bounds[1], max_ticks=max_auto_tks)
-        if auto_xs:
-            gl.lt_exec(f"layer.x.inc={auto_xs};")
+        if y_ax.limits is not None and not reserve_top_legend_space:
+            gl.set_ylim(float(y_ax.limits[0]), float(y_ax.limits[1]))
+            y_bounds = (float(min(y_ax.limits)), float(max(y_ax.limits)))
+        else:
+            gl.set_ylim(y_bounds[0], y_bounds[1])
 
-    if y_ax.major_step is not None and y_ax.major_step > 0:
-        gl.lt_exec(f"layer.y.inc={float(y_ax.major_step)};")
-    elif y_labels and not y_is_log and not has_2d_mat:
-        auto_ys = ob.compute_nice_linear_step(y_bounds[0], y_bounds[1], max_ticks=max_auto_tks)
-        if auto_ys:
-            gl.lt_exec(f"layer.y.inc={auto_ys};")
+        max_auto_tks = 5 if panel.equal_aspect else 6
+        if x_ax.major_step is not None and x_ax.major_step > 0:
+            gl.lt_exec(f"layer.x.inc={float(x_ax.major_step)};")
+        elif not is_cat_x and not x_is_log and not has_2d_mat:
+            auto_xs = ob.compute_nice_linear_step(x_bounds[0], x_bounds[1], max_ticks=max_auto_tks)
+            if auto_xs:
+                gl.lt_exec(f"layer.x.inc={auto_xs};")
+
+        if y_ax.major_step is not None and y_ax.major_step > 0:
+            gl.lt_exec(f"layer.y.inc={float(y_ax.major_step)};")
+        elif y_labels and not y_is_log and not has_2d_mat:
+            auto_ys = ob.compute_nice_linear_step(y_bounds[0], y_bounds[1], max_ticks=max_auto_tks)
+            if auto_ys:
+                gl.lt_exec(f"layer.y.inc={auto_ys};")
 
     if is_cat_x and cats:
         ob.render_categorical_x_labels_clean(
@@ -1276,19 +1380,67 @@ def _apply_single_axis_layer_style(
 def _resolve_inset_bbox_pct(ins: cg.InsetSpec, panel: cg.PanelSpec) -> Tuple[float, float, float, float]:
     l_p, t_p, w_p, h_p = [float(v) for v in ins.bbox_pct]
     show_ins_titles = ins.mode in ("subchart", "subpanel")
-    if panel.equal_aspect:
+    if panel.equal_aspect or ins.equal_aspect:
         if show_ins_titles:
             l_p = max(l_p, 48.0)
             t_p = min(t_p, 34.0)
-            w_p = min(w_p, 42.0)
-            h_p = min(h_p, 42.0)
+            side_p = min(w_p, h_p, 42.0)
+            w_p, h_p = side_p, side_p
         else:
-            # Crisp 41% x 41% square zoom inset in lower-right quadrant, clear of curves & legend!
-            l_p = max(l_p, 50.0)
-            t_p = max(43.0, min(t_p, 45.0))
-            w_p = min(w_p, 41.0)
-            h_p = min(h_p, 41.0)
+            # Inside a 6.40 x 4.80 in (4:3) parent frame, equal % width & height (42% x 42%)
+            # yields exact 4:3 physical dimensions (2.688 x 2.016 in) in the lower-right quadrant!
+            l_p = max(l_p, 51.0)
+            t_p = max(43.0, min(t_p, 46.0))
+            side_p = min(w_p, h_p, 42.0)
+            w_p, h_p = side_p, side_p
     return l_p, t_p, w_p, h_p
+
+
+def _resolve_inset_xy_bounds(
+    ins: cg.InsetSpec,
+    panel: cg.PanelSpec,
+    par_w_in: float,
+    par_h_in: float,
+) -> Tuple[Optional[Tuple[float, float]], Optional[Tuple[float, float]]]:
+    """
+    Resolve inset `(xlim, ylim)` so when `ins.equal_aspect=True`, `ins_x_span / ins_y_span` matches
+    the physical inch aspect ratio of the inset (`4:3` inside standard `6.40 x 4.80 in` frame),
+    expanding whichever axis is tighter so zero data points are clipped.
+    """
+    if ins.xlim is None or ins.ylim is None:
+        return (
+            (float(ins.xlim[0]), float(ins.xlim[1])) if ins.xlim is not None else None,
+            (float(ins.ylim[0]), float(ins.ylim[1])) if ins.ylim is not None else None,
+        )
+    ix0, ix1 = float(ins.xlim[0]), float(ins.xlim[1])
+    iy0, iy1 = float(ins.ylim[0]), float(ins.ylim[1])
+    if not ins.equal_aspect:
+        return (ix0, ix1), (iy0, iy1)
+
+    _lp, _tp, w_p, h_p = _resolve_inset_bbox_pct(ins, panel)
+    ins_w_in = max(par_w_in * (w_p / 100.0), 1e-6)
+    ins_h_in = max(par_h_in * (h_p / 100.0), 1e-6)
+    target_ratio = ins_w_in / ins_h_in
+    dx = abs(ix1 - ix0)
+    dy = abs(iy1 - iy0)
+    if dx <= 1e-12 or dy <= 1e-12 or abs((dx / dy) - target_ratio) <= 0.02 * target_ratio:
+        return (ix0, ix1), (iy0, iy1)
+
+    if abs(ix0) < 1e-9 and abs(iy0) < 1e-9 and ix1 > 0 and iy1 > 0 and abs(target_ratio - (4.0 / 3.0)) <= 0.03:
+        u_raw = max(ix1 / 4.0, iy1 / 3.0)
+        if u_raw >= 25.0:
+            u = math.ceil((u_raw - 1e-9) / 5.0) * 5.0
+        elif u_raw >= 5.0:
+            u = math.ceil((u_raw - 1e-9) / 1.0) * 1.0
+        else:
+            u = round(u_raw, 6)
+        return (0.0, round(4.0 * u, 6)), (0.0, round(3.0 * u, 6))
+
+    if dx / dy < target_ratio:
+        new_dx = target_ratio * dy
+        return (ix0, ix0 + (new_dx if ix1 >= ix0 else -new_dx)), (iy0, iy1)
+    new_dy = dx / target_ratio
+    return (ix0, ix1), (iy0, iy0 + (new_dy if iy1 >= iy0 else -new_dy))
 
 
 def _render_insets_for_panel(
@@ -1313,16 +1465,17 @@ def _render_insets_for_panel(
     font_clause = f"layer.x.label.font={f_id}; layer.y.label.font={f_id}; " if f_id > 0 else ""
     mx_span = max(abs(main_x_bounds[1] - main_x_bounds[0]), 1e-6)
     my_span = max(abs(main_y_bounds[1] - main_y_bounds[0]), 1e-6)
-    tgt_wh = ob._PAGE_TARGET_INCHES.get(gp.name, (float(spec["page_sq_w_in"]), float(spec["page_sq_h_in"])))
+    tgt_wh = ob._PAGE_TARGET_INCHES.get(gp.name, (float(spec["page_rect_w_in"]), float(spec["page_rect_h_in"])))
     pw_in, ph_in = tgt_wh
-    par_w_in = float(spec["box_sq_side_in"] if panel.equal_aspect else spec["box_rect_w_in"])
-    par_h_in = float(spec["box_sq_side_in"] if panel.equal_aspect else spec["box_rect_h_in"])
+    par_w_in = float(spec["box_rect_w_in"])
+    par_h_in = float(spec["box_rect_h_in"])
 
     for ins_idx, ins in enumerate(panel.insets, start=1):
-        if ins.show_zoom_box and ins.xlim is not None and ins.ylim is not None:
+        ix_lim_res, iy_lim_res = _resolve_inset_xy_bounds(ins, panel, par_w_in, par_h_in)
+        if ins.show_zoom_box and ix_lim_res is not None and iy_lim_res is not None:
             ob.activate_layer(op, gp, main_layer_num_1based)
-            zx0, zx1 = float(ins.xlim[0]), float(ins.xlim[1])
-            zy0, zy1 = float(ins.ylim[0]), float(ins.ylim[1])
+            zx0, zx1 = float(ix_lim_res[0]), float(ix_lim_res[1])
+            zy0, zy1 = float(iy_lim_res[0]), float(iy_lim_res[1])
             zx0_vis = max(zx0, main_x_bounds[0] + 0.008 * mx_span) if abs(zx0 - main_x_bounds[0]) < 0.01 * mx_span else zx0
             zy0_vis = max(zy0, main_y_bounds[0] + 0.008 * my_span) if abs(zy0 - main_y_bounds[0]) < 0.01 * my_span else zy0
             zb_sh = ob.unique_origin_short_name(f"ZoomBox{ins_idx}", used_sheets, default="ZBox")
@@ -1340,10 +1493,10 @@ def _render_insets_for_panel(
         ob.activate_layer(op, gp, ins_lay_num)
         gl_in.lt_exec("layer.fsize=1;")
 
-        ix_bg0 = float(ins.xlim[0]) if ins.xlim is not None else 0.0
-        ix_bg1 = float(ins.xlim[1]) if ins.xlim is not None else 1.0
-        iy_bg0 = float(ins.ylim[0]) if ins.ylim is not None else 0.0
-        iy_bg1 = float(ins.ylim[1]) if ins.ylim is not None else 1.0
+        ix_bg0 = float(ix_lim_res[0]) if ix_lim_res is not None else 0.0
+        ix_bg1 = float(ix_lim_res[1]) if ix_lim_res is not None else 1.0
+        iy_bg0 = float(iy_lim_res[0]) if iy_lim_res is not None else 0.0
+        iy_bg1 = float(iy_lim_res[1]) if iy_lim_res is not None else 1.0
         bg_sh = ob.unique_origin_short_name(f"InsBG{ins_idx}", used_sheets, default="IBG")
         wks_ibg = wb.add_sheet(bg_sh)
         wks_ibg.cols = 3
@@ -1368,27 +1521,25 @@ def _render_insets_for_panel(
         ins_target_mk = round(4.8 / ins_scale, 1)
 
         for sub_ly in ins.layers:
-            for sub_s in sub_ly.series:
-                orig_lw, orig_mk = sub_s.line_width_pt, sub_s.marker_size_pt
+            saved_styles = [(sub_s, sub_s.line_width_pt, sub_s.marker_size_pt) for sub_s in sub_ly.series]
+            for sub_s, _, _ in saved_styles:
                 sub_s.line_width_pt = ins_target_lw
                 sub_s.marker_size_pt = ins_target_mk
-                try:
-                    pass
-                finally:
-                    pass
-            _plot_layer_into_glayer(
-                op, gp, gl_in, ins_lay_num, sub_ly, panel, wb, used_sheets, pal_tmp_dir
-            )
-            for sub_s in sub_ly.series:
-                sub_s.line_width_pt = float(spec["curve_lw_pt"])
-                sub_s.marker_size_pt = float(spec["marker_size_pt"])
+            try:
+                _plot_layer_into_glayer(
+                    op, gp, gl_in, ins_lay_num, sub_ly, panel, wb, used_sheets, pal_tmp_dir
+                )
+            finally:
+                for sub_s, orig_lw, orig_mk in saved_styles:
+                    sub_s.line_width_pt = orig_lw
+                    sub_s.marker_size_pt = orig_mk
 
         ob.activate_layer(op, gp, ins_lay_num)
         gl_in.rescale()
-        if ins.xlim is not None:
-            gl_in.set_xlim(float(ins.xlim[0]), float(ins.xlim[1]))
-        if ins.ylim is not None:
-            gl_in.set_ylim(float(ins.ylim[0]), float(ins.ylim[1]))
+        if ix_lim_res is not None:
+            gl_in.set_xlim(float(ix_lim_res[0]), float(ix_lim_res[1]))
+        if iy_lim_res is not None:
+            gl_in.set_ylim(float(iy_lim_res[0]), float(iy_lim_res[1]))
 
         white_int = ot.hex_to_origin_rgb_int(ins.background_color or "#FFFFFF")
         ink_int = ot.hex_to_origin_rgb_int("#111111")
@@ -1423,11 +1574,25 @@ def _render_insets_for_panel(
             gl_in.lt_exec("layer.x.minorTicks=8; layer.x.label.numFormat=2;")
         if y_log:
             gl_in.lt_exec("layer.y.minorTicks=8; layer.y.label.numFormat=2;")
-        elif ins.xlim is not None and ins.ylim is not None and abs(float(ins.xlim[0])) < 1e-6 and abs(float(ins.ylim[0])) < 1e-6:
-            # Avoid colliding X-0 and Y-0 labels at the bottom-left corner of [0..L, 0..L] zoom insets
-            ins_step_x = ob.compute_nice_linear_step(float(ins.xlim[0]), float(ins.xlim[1]), max_ticks=3)
-            if ins_step_x and ins_step_x > 0:
-                gl_in.lt_exec(f"layer.x.inc={ins_step_x}; layer.x.firstTick={ins_step_x}; layer.y.inc={ins_step_x};")
+        elif ix_lim_res is not None and iy_lim_res is not None and not x_log:
+            gl_in.lt_exec(
+                f"layer.x.from={ix_lim_res[0]}; layer.x.to={ix_lim_res[1]}; "
+                f"layer.y.from={iy_lim_res[0]}; layer.y.to={iy_lim_res[1]};"
+            )
+            inc_x = (
+                float(ins.x_axis.major_step)
+                if (ins.x_axis.major_step is not None and ins.x_axis.major_step > 0)
+                else ob.compute_nice_linear_step(float(ix_lim_res[0]), float(ix_lim_res[1]), max_ticks=4)
+            )
+            inc_y = (
+                float(ins.y_axis.major_step)
+                if (ins.y_axis.major_step is not None and ins.y_axis.major_step > 0)
+                else ob.compute_nice_linear_step(float(iy_lim_res[0]), float(iy_lim_res[1]), max_ticks=4)
+            )
+            if inc_x and inc_x > 0:
+                gl_in.lt_exec(f"layer.x.inc={inc_x};")
+            if inc_y and inc_y > 0:
+                gl_in.lt_exec(f"layer.y.inc={inc_y};")
 
         show_ins_titles = ins.mode in ("subchart", "subpanel")
         ob.style_origin_native_axis_title(
@@ -1452,8 +1617,8 @@ def _render_insets_for_panel(
         )
 
         if ins.guides:
-            ix_b = ins.xlim if ins.xlim is not None else (0.0, 1.0)
-            iy_b = ins.ylim if ins.ylim is not None else (0.0, 1.0)
+            ix_b = ix_lim_res if ix_lim_res is not None else (0.0, 1.0)
+            iy_b = iy_lim_res if iy_lim_res is not None else (0.0, 1.0)
             _render_guides_into_glayer(
                 op, gp, gl_in, ins_lay_num, ins.guides, wb, used_sheets, ix_b, iy_b
             )
@@ -1959,6 +2124,7 @@ def _render_contour_2d_page(
         page_w, page_h = float(spec["page_sq_w_in"]), float(spec["page_sq_h_in"])
         sq_side = float(spec["box_sq_side_in"])
         sq_top = float(spec["box_sq_top_in"])
+        # Shift 4.80 in square 0.40 in left (to 2.40 in) so [square + 0.24 gap + 0.24 colorbar + ~0.55 labels] centers optically on 10.40 in page
         sq_left = max(2.15, float(spec["box_sq_left_in"]) - 0.40)
         sq_box_in = (sq_left, sq_top, sq_side, sq_side)
         ob.set_graph_page_inches(gp, page_w, page_h)
@@ -2349,18 +2515,13 @@ def _render_single_panel_page(
     tpl = _resolve_clean_origin_template(panel.layers)
     gp = op.new_graph(lname=page_lname, template=tpl) if tpl else op.new_graph(lname=page_lname)
 
-    if panel.equal_aspect:
-        pw, ph = float(spec["page_sq_w_in"]), float(spec["page_sq_h_in"])
-        sq_s = float(spec["box_sq_side_in"])
-        box_in = (float(spec["box_sq_left_in"]), float(spec["box_sq_top_in"]), sq_s, sq_s)
-    else:
-        pw, ph = float(spec["page_rect_w_in"]), float(spec["page_rect_h_in"])
-        box_in = (
-            float(spec["box_rect_left_in"]),
-            float(spec["box_rect_top_in"]),
-            float(spec["box_rect_w_in"]),
-            float(spec["box_rect_h_in"]),
-        )
+    pw, ph = float(spec["page_rect_w_in"]), float(spec["page_rect_h_in"])
+    box_in = (
+        float(spec["box_rect_left_in"]),
+        float(spec["box_rect_top_in"]),
+        float(spec["box_rect_w_in"]),
+        float(spec["box_rect_h_in"]),
+    )
     ob.set_graph_page_inches(gp, pw, ph)
     rect_for_leg = ot.rect_in_to_page_pct(*box_in, pw, ph)
 
@@ -2413,13 +2574,6 @@ def _render_single_panel_page(
             tick_pt=float(spec["tick_label_pt"]),
         )
         y_bounds = (0.0, top_100)
-
-    if panel.equal_aspect:
-        ob.activate_layer(op, gp, 1)
-        if panel.x_axis.major_step is not None and panel.x_axis.major_step > 0:
-            gl.lt_exec(f"layer.x.inc={panel.x_axis.major_step}; layer.y.inc={panel.x_axis.major_step};")
-        elif panel.y1_axis.major_step is not None and panel.y1_axis.major_step > 0:
-            gl.lt_exec(f"layer.x.inc={panel.y1_axis.major_step}; layer.y.inc={panel.y1_axis.major_step};")
 
     if panel.guides:
         _render_guides_into_glayer(
@@ -2641,11 +2795,16 @@ def _draw_zoom_connectors(
     x_span = max(x_hi - x_lo, 1e-6)
     y_span = max(y_hi - y_lo, 1e-6)
 
+    spec = ob.get_active_spec()
+    par_w_in = float(spec["box_rect_w_in"])
+    par_h_in = float(spec["box_rect_h_in"])
+
     for ins in insets:
-        if ins.xlim is None or ins.ylim is None:
+        ix_lim_res, iy_lim_res = _resolve_inset_xy_bounds(ins, panel, par_w_in, par_h_in)
+        if ix_lim_res is None or iy_lim_res is None:
             continue
-        zx0, zx1 = float(min(ins.xlim)), float(max(ins.xlim))
-        zy0, zy1 = float(min(ins.ylim)), float(max(ins.ylim))
+        zx0, zx1 = float(min(ix_lim_res)), float(max(ix_lim_res))
+        zy0, zy1 = float(min(iy_lim_res)), float(max(iy_lim_res))
         il, it, iw, ih = _resolve_inset_bbox_pct(ins, panel)
 
         def _pct_to_data_x(p: float) -> float:

@@ -30,13 +30,13 @@ import origin_renderer as ornd  # noqa: E402
 
 
 def _make_synthetic_nyquist_spec(style_preset: str) -> cg.FigureSpec:
-    """Analytical modified Randles + blocking/Warburg impedance spectra filling `[0..1500, 0..1500]` cleanly."""
-    freqs = np.logspace(5.2, -1.75, 42)
+    """Analytical modified Randles + blocking/Warburg impedance spectra filling 4:3 `[0..1200, 0..900]` Ohm cleanly."""
+    freqs = np.logspace(5.2, -1.64, 42)
     omega = 2.0 * np.pi * freqs
     params = [
-        ("Sample 1", 20.0, 118.0, 2.2e-5, 195.0, 0.0086, "#2B6CB0"),
-        ("Sample 2", 16.0, 82.0, 2.6e-5, 155.0, 0.0102, "#D84B5C"),
-        ("Sample 3", 13.0, 54.0, 3.0e-5, 120.0, 0.0124, "#6579BE"),
+        ("Sample 1", 18.0, 122.0, 2.2e-5, 145.0, 0.0155, "#2B6CB0"),
+        ("Sample 2", 14.0, 86.0, 2.6e-5, 118.0, 0.0175, "#D84B5C"),
+        ("Sample 3", 10.0, 56.0, 3.0e-5, 92.0, 0.0198, "#6579BE"),
     ]
     main_series: List[cg.SeriesSpec] = []
     inset_series: List[cg.SeriesSpec] = []
@@ -60,19 +60,21 @@ def _make_synthetic_nyquist_spec(style_preset: str) -> cg.FigureSpec:
         panel_id="nyquist_main",
         equal_aspect=True,
         legend_style="corner_upper_right",
-        x_axis=cg.AxisSpec(label="Z' (Ohm)", axis_kind="quantitative", limits=(0.0, 1500.0), major_step=500.0),
-        y1_axis=cg.AxisSpec(label="-Z'' (Ohm)", axis_kind="quantitative", limits=(0.0, 1500.0), major_step=500.0),
+        x_axis=cg.AxisSpec(label="Z' (Ohm)", axis_kind="quantitative", limits=(0.0, 1200.0), major_step=300.0),
+        y1_axis=cg.AxisSpec(label="-Z'' (Ohm)", axis_kind="quantitative", limits=(0.0, 900.0), major_step=300.0),
         layers=[cg.LayerSpec(layer_id="eis_curves", mark="line_scatter", series=main_series)],
         insets=[
             cg.InsetSpec(
                 inset_id="hf_zoom",
                 mode="zoom",
-                bbox_pct=(50.0, 43.0, 41.0, 41.0),
+                bbox_pct=(51.0, 44.0, 42.0, 42.0),
                 xlim=(0.0, 200.0),
-                ylim=(0.0, 200.0),
+                ylim=(0.0, 150.0),
                 equal_aspect=True,
                 show_zoom_box=True,
                 zoom_box_color="#6579BE",
+                x_axis=cg.AxisSpec(which="x", label="", axis_kind="inset", limits=(0.0, 200.0), major_step=100.0),
+                y_axis=cg.AxisSpec(which="y1", label="", axis_kind="inset", limits=(0.0, 150.0), major_step=75.0),
                 layers=[cg.LayerSpec(layer_id="eis_hf", mark="line_scatter", series=inset_series)],
             )
         ],

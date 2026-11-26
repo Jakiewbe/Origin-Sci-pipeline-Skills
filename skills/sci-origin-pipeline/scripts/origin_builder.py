@@ -84,6 +84,62 @@ def compute_nice_linear_step(lo: float, hi: float, max_ticks: int = 6) -> Option
     return float(round(50.0 * exp10, 10))
 
 
+_NYQ_4_3_STEPS: Tuple[float, ...] = (
+    0.05,
+    0.1,
+    0.2,
+    0.25,
+    0.3,
+    0.5,
+    1.0,
+    2.0,
+    2.5,
+    3.0,
+    5.0,
+    10.0,
+    15.0,
+    20.0,
+    25.0,
+    30.0,
+    50.0,
+    75.0,
+    100.0,
+    150.0,
+    200.0,
+    250.0,
+    300.0,
+    500.0,
+    750.0,
+    1000.0,
+    1500.0,
+    2000.0,
+    2500.0,
+    3000.0,
+    5000.0,
+    10000.0,
+)
+
+
+def compute_isometric_4_3_bounds(
+    max_zr: float,
+    max_nzi: float,
+) -> Tuple[Tuple[float, float], Tuple[float, float], float]:
+    """Compute physical 1:1 Ohm/inch `4:3` bounds `((0, 4*step), (0, 3*step), step)` for standard `6.40 x 4.80 in` frame."""
+    if max_nzi > 2.2 * max(max_zr, 1.0):
+        req_y = min(max_nzi * 1.08, max(900.0, max_zr * 1.45))
+        req_x = max(max_zr * 1.08, 1.0)
+    else:
+        req_x = max(max_zr * 1.08, 1.0)
+        req_y = max(max_nzi * 1.08, 1.0)
+    need = max(req_x / 4.0, req_y / 3.0, 1e-6)
+    step = float(math.ceil(need / 5000.0) * 5000.0)
+    for cand in _NYQ_4_3_STEPS:
+        if cand + 1e-9 >= need:
+            step = float(cand)
+            break
+    return (0.0, round(4.0 * step, 6)), (0.0, round(3.0 * step, 6)), step
+
+
 def _reset_session_overlay_state() -> None:
     _FONT_FACE_CACHE.clear()
     _PENDING_AXIS_TITLES.clear()
@@ -1158,8 +1214,8 @@ def flush_page_overlays(op: Any, gp: Any) -> None:
         if k_code == 20:
             gl_ov.lt_exec(f"range rm = !{p_idx}; set rm -k 20;")
         else:
-            # Origin Python API: symbol_kind=1 is 2D Circle; symbol_interior=0 is Solid, 1 is Open (white-filled)
-            p_mk.symbol_kind = 2 if int(k_code) == 2 else max(0, int(k_code) - 1)
+            # Origin C `symbol.kind`: 1=Square, 2=Circle, 3=UpTri, 4=DownTri, 5=Diamond; `symbol.interior`: 0=Solid(●), 1=Open(○)
+            p_mk.symbol_kind = int(k_code)
             p_mk.symbol_interior = 1 if int(int_code) == 2 else 0
         c_ptr += 2
 
@@ -2613,10 +2669,10 @@ def build_nyquist_opju(
         sub_w = int(spec["sub_w_units"])
         mk_sz = float(spec["marker_size_pt"])
 
-        pw, ph = float(spec["page_sq_w_in"]), float(spec["page_sq_h_in"])
-        sq_side = float(spec["box_sq_side_in"])
-        sq_box_in = (float(spec["box_sq_left_in"]), float(spec["box_sq_top_in"]), sq_side, sq_side)
-        sq_rect_pct = ot.rect_in_to_page_pct(*sq_box_in, pw, ph)
+        pw, ph = float(spec["page_rect_w_in"]), float(spec["page_rect_h_in"])
+        rect_w, rect_h = float(spec["box_rect_w_in"]), float(spec["box_rect_h_in"])
+        rect_box_in = (float(spec["box_rect_left_in"]), float(spec["box_rect_top_in"]), rect_w, rect_h)
+        rect_pct = ot.rect_in_to_page_pct(*rect_box_in, pw, ph)
 
         wb = op.new_book("w", lname=f"{project_title}_Book")
         gp = op.new_graph(lname=f"{project_title}_Graph")
@@ -2626,7 +2682,8 @@ def build_nyquist_opju(
         pal = ot.resolve_series_colors(len(eis_series), scheme="paired_semantic")
         max_zr = 0.0
         max_nzi = 0.0
-        hf_max = 0.0
+        hf_zr_max = 0.0
+        hf_nzi_max = 0.0
         sheets_created = []
         leg_entries: List[Tuple[Any, ...]] = []
         used_sheets: set[str] = set()
@@ -2670,45 +2727,46 @@ def build_nyquist_opju(
             max_zr = max(max_zr, float(np.max(zr)))
             max_nzi = max(max_nzi, float(np.max(nzi)))
             n_hf = max(6, len(zr) // 3)
-            hf_max = max(hf_max, float(np.max(zr[:n_hf])), float(np.max(nzi[:n_hf])))
+            hf_zr_max = max(hf_zr_max, float(np.max(zr[:n_hf])))
+            hf_nzi_max = max(hf_nzi_max, float(np.max(nzi[:n_hf])))
 
-        raw_max_sp = max(max_zr, max_nzi)
-        if max_nzi > 2.2 * max(max_zr, 1.0):
-            lim = min(raw_max_sp * 1.06, max(1200.0, max_zr * 2.35))
-        else:
-            lim = max(raw_max_sp * 1.12, 1.0)
-        step_cand = (
-            1000.0
-            if lim > 1800.0
-            else (500.0 if lim > 1000.0 else (200.0 if lim > 450.0 else (50.0 if lim > 120.0 else 10.0)))
-        )
-        lim = math.ceil(lim / step_cand) * step_cand
+        x_lim_43, y_lim_43, step_cand = compute_isometric_4_3_bounds(max_zr, max_nzi)
+        xlim_top = x_lim_43[1]
+        ylim_top = y_lim_43[1]
 
-        gl.set_xlim(0.0, lim)
-        gl.set_ylim(0.0, lim)
+        gl.set_xlim(0.0, xlim_top)
+        gl.set_ylim(0.0, ylim_top)
         _style_origin_layer_boxed(
             gl,
             "\\i(Z') (\\g(W))",
             "-\\i(Z'') (\\g(W))",
             minimal_ticks=minimal_ticks,
             box_thickness=box_thickness,
-            layer_rect_pct=sq_rect_pct,
-            layer_rect_in=sq_box_in,
+            layer_rect_pct=rect_pct,
+            layer_rect_in=rect_box_in,
             remove_legend=True,
             op=op,
             gp=gp,
             layer_num_1based=1,
         )
-        gl.lt_exec(f"layer.x.inc={step_cand}; layer.y.inc={step_cand};")
+        gl.lt_exec(
+            f"layer.x.from=0; layer.x.to={xlim_top}; layer.x.inc={step_cand}; "
+            f"layer.y.from=0; layer.y.to={ylim_top}; layer.y.inc={step_cand};"
+        )
 
-        if add_hf_inset and 0.0 < hf_max < 0.45 * lim:
-            in_lim = math.ceil((hf_max * 1.18) / 20.0) * 20.0 if hf_max > 25.0 else hf_max * 1.18
+        hf_max = max(hf_zr_max, hf_nzi_max)
+        if add_hf_inset and 0.0 < hf_max < 0.45 * xlim_top:
+            in_u_raw = max((hf_zr_max * 1.16) / 4.0, (hf_nzi_max * 1.16) / 3.0)
+            in_u = math.ceil(in_u_raw / 5.0) * 5.0 if in_u_raw >= 15.0 else max(round(in_u_raw, 2), 0.5)
+            in_xlim = 4.0 * in_u
+            in_ylim = 3.0 * in_u
             zb_sh = unique_origin_short_name("HFZoomBox", used_sheets, default="ZBox")
             wks_zb = wb.add_sheet(zb_sh)
             wks_zb.cols = 2
-            eps = 0.010 * lim
-            wks_zb.from_list(0, [eps, in_lim, in_lim, eps, eps], lname="ZBox_X", axis="X")
-            wks_zb.from_list(1, [eps, eps, in_lim, in_lim, eps], lname="ZBox_Y", axis="Y")
+            eps_x = 0.008 * xlim_top
+            eps_y = 0.008 * ylim_top
+            wks_zb.from_list(0, [eps_x, in_xlim, in_xlim, eps_x, eps_x], lname="ZBox_X", axis="X")
+            wks_zb.from_list(1, [eps_y, eps_y, in_ylim, in_ylim, eps_y], lname="ZBox_Y", axis="Y")
             p_zb = gl.add_plot(wks_zb, coly=1, colx=0, type="l")
             p_zb.color = _hex_to_origin_color(op, "#6579BE")
             zb_idx = len(gl.plot_list())
@@ -2723,8 +2781,8 @@ def build_nyquist_opju(
             font_in = f"layer.x.label.font={f_id}; layer.y.label.font={f_id}; " if f_id > 0 else ""
             wks_in_bg = op.new_book("w", lname="Nyquist_InBG")[0]
             wks_in_bg.cols = 3
-            wks_in_bg.from_list(0, [0.0, in_lim], axis="X")
-            wks_in_bg.from_list(1, [in_lim, in_lim], axis="Y")
+            wks_in_bg.from_list(0, [0.0, in_xlim], axis="X")
+            wks_in_bg.from_list(1, [in_ylim, in_ylim], axis="Y")
             wks_in_bg.from_list(2, [0.0, 0.0], axis="Y")
             p_bg_u = gl_in.add_plot(wks_in_bg, coly=1, colx=0, type="l")
             p_bg_l = gl_in.add_plot(wks_in_bg, coly=2, colx=0, type="l")
@@ -2734,7 +2792,9 @@ def build_nyquist_opju(
             p_bg_u.transparency = 0
             p_bg_l.transparency = 100
             gl_in.lt_exec("range rbu = !1; set rbu -w 0; range rbl = !2; set rbl -w 0;")
-            ins_scale = ot.compute_origin_layer_scale(0.42 * sq_side, 0.42 * sq_side, pw, ph)
+            ins_w_in = 0.42 * rect_w
+            ins_h_in = 0.42 * rect_h
+            ins_scale = ot.compute_origin_layer_scale(ins_w_in, ins_h_in, pw, ph)
             ins_w_u = int(round((cw_u * 0.72) / ins_scale))
             ins_mk_sz = round(4.8 / ins_scale, 1)
             for _idx, (wks, _item, c_hex) in enumerate(sheets_created):
@@ -2745,13 +2805,15 @@ def build_nyquist_opju(
                 gl_in.lt_exec(f"range rin = !{in_idx_1}; set rin -w {ins_w_u};")
                 p_in.symbol_kind = 2
                 p_in.symbol_interior = 0
-            gl_in.set_xlim(0.0, in_lim)
-            gl_in.set_ylim(0.0, in_lim)
+            gl_in.set_xlim(0.0, in_xlim)
+            gl_in.set_ylim(0.0, in_ylim)
             ins_bt = float(spec["inset_box_lw_pt"])
-            ins_comp_pt = ot.compensate_origin_layer_pt(float(spec["inset_tick_pt"]), 0.42 * sq_side, 0.42 * sq_side, pw, ph)
+            ins_comp_pt = ot.compensate_origin_layer_pt(float(spec["inset_tick_pt"]), ins_w_in, ins_h_in, pw, ph)
+            inc_ix = compute_nice_linear_step(0.0, in_xlim, max_ticks=4) or in_u
+            inc_iy = compute_nice_linear_step(0.0, in_ylim, max_ticks=4) or in_u
             gl_in.lt_exec(
                 f"layer.fsize=1; "
-                f"layer.unit=7; layer.left=50; layer.top=34; layer.width=42; layer.height=42; "
+                f"layer.unit=7; layer.left=51; layer.top=44; layer.width=42; layer.height=42; "
                 f"layer.color={white_int}; "
                 f"layer.x.grid.show=0; layer.y.grid.show=0; "
                 f"layer.x.showAxes=3; layer.y.showAxes=3; "
@@ -2761,16 +2823,18 @@ def build_nyquist_opju(
                 f"layer.x.label.color={ink_int}; layer.y.label.color={ink_int}; "
                 f"layer.x.ticks=1; layer.y.ticks=1; "
                 f"layer.x2.ticks=0; layer.y2.ticks=0; "
+                f"layer.x.from=0; layer.x.to={in_xlim}; layer.x.inc={inc_ix}; "
+                f"layer.y.from=0; layer.y.to={in_ylim}; layer.y.inc={inc_iy}; "
                 f"layer.x.maxTicks=4; layer.y.maxTicks=4; "
                 f"{font_in}"
                 f"layer.x.label.pt={ins_comp_pt}; layer.y.label.pt={ins_comp_pt}; layer.x.label.bold={bold_i}; layer.y.label.bold={bold_i}; "
                 f"XB.show=0; YL.show=0; label -r Legend;"
             )
             style_origin_native_axis_title(
-                gl_in, "XB", "\\i(Z') (\\g(W))", fontsize=16.0, color_int=ink_int, op=op, gp=gp, layer_num_1based=2
+                gl_in, "XB", "", fontsize=16.0, color_int=ink_int, op=op, gp=gp, layer_num_1based=2
             )
             style_origin_native_axis_title(
-                gl_in, "YL", "-\\i(Z'') (\\g(W))", fontsize=16.0, color_int=ink_int, op=op, gp=gp, layer_num_1based=2
+                gl_in, "YL", "", fontsize=16.0, color_int=ink_int, op=op, gp=gp, layer_num_1based=2
             )
 
         configure_custom_legend(
@@ -2778,7 +2842,7 @@ def build_nyquist_opju(
             leg_entries,
             fontsize=float(spec["legend_pt"]),
             pos_mode="corner_upper_right",
-            layer_rect_pct=sq_rect_pct,
+            layer_rect_pct=rect_pct,
             op=op,
             gp=gp,
             layer_num_1based=1,
@@ -3850,16 +3914,14 @@ def build_composite_opju(
                 panel_sheets.append((letter, p, wks))
 
             elif ptype == "nyquist":
-                pw_sq, ph_sq = float(spec["page_sq_w_in"]), float(spec["page_sq_h_in"])
-                sq_s = float(spec["box_sq_side_in"])
-                sq_box = (float(spec["box_sq_left_in"]), float(spec["box_sq_top_in"]), sq_s, sq_s)
-                sq_rect = ot.rect_in_to_page_pct(*sq_box, pw_sq, ph_sq)
-
                 wb = op.new_book("w", lname=f"Panel_{letter}_EIS_Book")
                 gp = op.new_graph(lname=f"Panel_{letter}_EIS_Graph")
-                set_graph_page_inches(gp, pw_sq, ph_sq)
+                set_graph_page_inches(gp, pw_s, ph_s)
                 gl = gp[0]
-                max_sp = 0.0
+                max_zr_s = 0.0
+                max_nzi_s = 0.0
+                hf_zr_s = 0.0
+                hf_nzi_s = 0.0
                 used_sheets: set[str] = set()
                 eis_wks_list = []
                 leg_e: List[Tuple[Any, ...]] = []
@@ -3881,15 +3943,93 @@ def build_composite_opju(
                     pe.symbol_interior = 0
                     leg_e.append((pi1, nm, c_hex, "line_sphere"))
                     eis_wks_list.append((wks, item))
-                    max_sp = max(max_sp, float(np.max(item["z_real"])), float(np.max(item["neg_z_imag"])))
-                lim = max(max_sp * 1.15, 1.0)
-                gl.set_xlim(0.0, lim)
-                gl.set_ylim(0.0, lim)
+                    zr_arr = np.asarray(item["z_real"], dtype=float)
+                    nzi_arr = np.asarray(item["neg_z_imag"], dtype=float)
+                    max_zr_s = max(max_zr_s, float(np.max(zr_arr)))
+                    max_nzi_s = max(max_nzi_s, float(np.max(nzi_arr)))
+                    n_hf_s = max(6, len(zr_arr) // 3)
+                    hf_zr_s = max(hf_zr_s, float(np.max(zr_arr[:n_hf_s])))
+                    hf_nzi_s = max(hf_nzi_s, float(np.max(nzi_arr[:n_hf_s])))
+
+                x_lim_s, y_lim_s, step_s = compute_isometric_4_3_bounds(max_zr_s, max_nzi_s)
+                gl.set_xlim(0.0, x_lim_s[1])
+                gl.set_ylim(0.0, y_lim_s[1])
                 _style_origin_layer_boxed(
-                    gl, "\\i(Z') (\\g(W))", "-\\i(Z'') (\\g(W))", minimal_ticks=minimal_ticks, box_thickness=box_thickness, layer_rect_pct=sq_rect, layer_rect_in=sq_box, remove_legend=True, op=op, gp=gp, layer_num_1based=1
+                    gl,
+                    "\\i(Z') (\\g(W))",
+                    "-\\i(Z'') (\\g(W))",
+                    minimal_ticks=minimal_ticks,
+                    box_thickness=box_thickness,
+                    layer_rect_pct=rect_s,
+                    layer_rect_in=box_s,
+                    remove_legend=True,
+                    op=op,
+                    gp=gp,
+                    layer_num_1based=1,
                 )
+                gl.lt_exec(
+                    f"layer.x.from=0; layer.x.to={x_lim_s[1]}; layer.x.inc={step_s}; "
+                    f"layer.y.from=0; layer.y.to={y_lim_s[1]}; layer.y.inc={step_s};"
+                )
+
+                if p.get("add_hf_inset", False) and 0.0 < max(hf_zr_s, hf_nzi_s) < 0.45 * x_lim_s[1]:
+                    in_u_s = max((hf_zr_s * 1.16) / 4.0, (hf_nzi_s * 1.16) / 3.0)
+                    in_u_s = math.ceil(in_u_s / 5.0) * 5.0 if in_u_s >= 15.0 else max(round(in_u_s, 2), 0.5)
+                    in_xl_s, in_yl_s = 4.0 * in_u_s, 3.0 * in_u_s
+                    gl_in_s = gp.add_layer(6)
+                    activate_layer(op, gp, 2)
+                    gl_in_s.lt_exec("layer.fsize=1;")
+                    white_s_int = ot.hex_to_origin_rgb_int("#FFFFFF")
+                    white_s_oc = _hex_to_origin_color(op, "#FFFFFF")
+                    ink_s_int = ot.hex_to_origin_rgb_int("#111111")
+                    font_in_s = f"layer.x.label.font={f_id_c}; layer.y.label.font={f_id_c}; " if f_id_c > 0 else ""
+                    wks_s_bg = wb.add_sheet(unique_origin_short_name("EISInBG", used_sheets, default="IBG"))
+                    wks_s_bg.cols = 3
+                    wks_s_bg.from_list(0, [0.0, in_xl_s], axis="X")
+                    wks_s_bg.from_list(1, [in_yl_s, in_yl_s], axis="Y")
+                    wks_s_bg.from_list(2, [0.0, 0.0], axis="Y")
+                    ps_bu = gl_in_s.add_plot(wks_s_bg, coly=1, colx=0, type="l")
+                    ps_bl = gl_in_s.add_plot(wks_s_bg, coly=2, colx=0, type="l")
+                    ps_bu.color = white_s_oc
+                    ps_bl.color = white_s_oc
+                    ps_bu.set_fill_area(above=white_s_oc, type=9, below=white_s_oc)
+                    ps_bu.transparency = 0
+                    ps_bl.transparency = 100
+                    gl_in_s.lt_exec("range rbu = !1; set rbu -w 0; range rbl = !2; set rbl -w 0;")
+                    ins_s_w_in, ins_s_h_in = 0.42 * box_s[2], 0.42 * box_s[3]
+                    ins_s_scale = ot.compute_origin_layer_scale(ins_s_w_in, ins_s_h_in, pw_s, ph_s)
+                    for wks_e_s, item_s in eis_wks_list:
+                        chx_s = ot.normalize_hex(item_s.get("color", "#3E86DE"))
+                        pis = gl_in_s.add_plot(wks_e_s, coly=2, colx=1, type="y")
+                        pis.color = _hex_to_origin_color(op, chx_s)
+                        pis.symbol_size = round(4.8 / ins_s_scale, 1)
+                        isi = len(gl_in_s.plot_list())
+                        gl_in_s.lt_exec(f"range rin = !{isi}; set rin -w {int(round((cw_u * 0.72) / ins_s_scale))};")
+                        pis.symbol_kind = 2
+                        pis.symbol_interior = 0
+                    gl_in_s.set_xlim(0.0, in_xl_s)
+                    gl_in_s.set_ylim(0.0, in_yl_s)
+                    ins_s_bt = float(spec["inset_box_lw_pt"])
+                    ins_s_pt = ot.compensate_origin_layer_pt(float(spec["inset_tick_pt"]), ins_s_w_in, ins_s_h_in, pw_s, ph_s)
+                    inc_sx = compute_nice_linear_step(0.0, in_xl_s, max_ticks=4) or in_u_s
+                    inc_sy = compute_nice_linear_step(0.0, in_yl_s, max_ticks=4) or in_u_s
+                    gl_in_s.lt_exec(
+                        f"layer.fsize=1; layer.unit=7; layer.left=51; layer.top=44; layer.width=42; layer.height=42; "
+                        f"layer.color={white_s_int}; layer.x.grid.show=0; layer.y.grid.show=0; "
+                        f"layer.x.showAxes=3; layer.y.showAxes=3; "
+                        f"layer.x.thickness={ins_s_bt}; layer.y.thickness={ins_s_bt}; layer.x2.thickness={ins_s_bt}; layer.y2.thickness={ins_s_bt}; "
+                        f"layer.x.color={ink_s_int}; layer.y.color={ink_s_int}; layer.x2.color={ink_s_int}; layer.y2.color={ink_s_int}; "
+                        f"layer.x.label.color={ink_s_int}; layer.y.label.color={ink_s_int}; "
+                        f"layer.x.ticks=1; layer.y.ticks=1; layer.x2.ticks=0; layer.y2.ticks=0; "
+                        f"layer.x.from=0; layer.x.to={in_xl_s}; layer.x.inc={inc_sx}; "
+                        f"layer.y.from=0; layer.y.to={in_yl_s}; layer.y.inc={inc_sy}; "
+                        f"layer.x.maxTicks=4; layer.y.maxTicks=4; {font_in_s}"
+                        f"layer.x.label.pt={ins_s_pt}; layer.y.label.pt={ins_s_pt}; layer.x.label.bold={bold_i}; layer.y.label.bold={bold_i}; "
+                        f"XB.show=0; YL.show=0; label -r Legend;"
+                    )
+
                 configure_custom_legend(
-                    gl, leg_e, fontsize=float(spec["legend_pt"]), pos_mode="corner_upper_right", layer_rect_pct=sq_rect, op=op, gp=gp, layer_num_1based=1
+                    gl, leg_e, fontsize=float(spec["legend_pt"]), pos_mode="corner_upper_right", layer_rect_pct=rect_s, op=op, gp=gp, layer_num_1based=1
                 )
                 panel_sheets.append((letter, p, eis_wks_list))
 
@@ -4124,20 +4264,21 @@ def build_composite_opju(
                     pc_bu.transparency = 0
                     pc_bl.transparency = 100
                     gl_in_c.lt_exec("range rbu = !1; set rbu -w 0; range rbl = !2; set rbl -w 0;")
+                    in_li = nyq_left_in + 0.46 * 3.08
+                    in_ti = c_top_in + 0.38 * 3.08
+                    in_si = 0.44 * 3.08
+                    ins_c_scale = ot.compute_origin_layer_scale(in_si, in_si, comp_w_in, comp_h_in)
                     for wks_e, item in ref_obj:
                         c_hex_i = ot.normalize_hex(item.get("color", "#3E86DE"))
                         p_ic = gl_in_c.add_plot(wks_e, coly=2, colx=1, type="y")
                         p_ic.color = _hex_to_origin_color(op, c_hex_i)
-                        p_ic.symbol_size = 11.0
+                        p_ic.symbol_size = round(3.8 / ins_c_scale, 1)
                         ic_idx = len(gl_in_c.plot_list())
-                        gl_in_c.lt_exec(f"range ric = !{ic_idx}; set ric -w {int(round(cell_cw_u * 2.1))};")
+                        gl_in_c.lt_exec(f"range ric = !{ic_idx}; set ric -w {int(round((cell_cw_u * 0.72) / ins_c_scale))};")
                         p_ic.symbol_kind = 2
                         p_ic.symbol_interior = 0
                     gl_in_c.set_xlim(0.0, in_lim_c)
                     gl_in_c.set_ylim(0.0, in_lim_c)
-                    in_li = nyq_left_in + 0.46 * 3.08
-                    in_ti = c_top_in + 0.38 * 3.08
-                    in_si = 0.44 * 3.08
                     ins_c_bt = max(1.0, round(cell_bt * 0.72, 2))
                     ins_c_tk_pt = ot.compensate_origin_layer_pt(11.5, in_si, in_si, comp_w_in, comp_h_in)
                     gl_in_c.lt_exec(

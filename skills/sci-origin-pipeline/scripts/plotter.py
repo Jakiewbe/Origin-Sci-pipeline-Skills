@@ -630,42 +630,60 @@ def plot_nyquist(
     add_hf_inset: bool = True,
     style: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, str]:
-    """Render strict 1:1 equal-aspect EIS Nyquist plot with optional high-frequency zoom inset."""
+    """Render isometric 1:1 Ohm/inch EIS Nyquist plot inside a standard 4:3 frame (`X_span : Y_span = 4 : 3`)."""
     st = style or load_style()
     apply_rcparams(st)
     pal = st["series_palette"]
-    markers = ["o", "s", "^", "D", "v", "P"]
 
-    fig, ax = plt.subplots(figsize=(6.0, 5.6))
+    fig, ax = plt.subplots(figsize=(6.8, 5.1))
 
-    max_span = 0.0
-    hf_max = 0.0
+    max_zr = 0.0
+    max_nzi = 0.0
+    hf_zr = 0.0
+    hf_nzi = 0.0
     for idx, item in enumerate(eis_series):
         zr = np.asarray(item["z_real"], dtype=float)
         nzi = np.asarray(item["neg_z_imag"], dtype=float)
         col = item.get("color") or pal[idx % len(pal)]
-        mk = markers[idx % len(markers)]
         ax.plot(
             zr,
             nzi,
-            marker=mk,
+            marker="o",
             ms=5.0,
-            mfc="white" if idx % 2 == 1 else col,
+            mfc=col,
             mec=col,
-            mew=1.4,
+            mew=1.2,
             lw=1.6,
             color=col,
             label=item["name"],
             zorder=5 + idx,
         )
-        max_span = max(max_span, float(np.max(zr)), float(np.max(nzi)))
+        max_zr = max(max_zr, float(np.max(zr)))
+        max_nzi = max(max_nzi, float(np.max(nzi)))
         n_hf = max(6, len(zr) // 3)
-        hf_max = max(hf_max, float(np.max(zr[:n_hf])), float(np.max(nzi[:n_hf])))
+        hf_zr = max(hf_zr, float(np.max(zr[:n_hf])))
+        hf_nzi = max(hf_nzi, float(np.max(nzi[:n_hf])))
 
-    lim = max_span * 1.15
-    ax.set_xlim(0.0, lim)
-    ax.set_ylim(0.0, lim)
+    if max_nzi > 2.2 * max(max_zr, 1.0):
+        req_y = min(max_nzi * 1.08, max(900.0, max_zr * 1.45))
+        req_x = max(max_zr * 1.08, 1.0)
+    else:
+        req_x = max(max_zr * 1.08, 1.0)
+        req_y = max(max_nzi * 1.08, 1.0)
+    need_step = max(req_x / 4.0, req_y / 3.0, 1e-6)
+    step = float(math.ceil(need_step / 5000.0) * 5000.0)
+    for cand in (0.1, 0.2, 0.25, 0.5, 1.0, 2.0, 2.5, 3.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 50.0, 75.0, 100.0, 150.0, 200.0, 250.0, 300.0, 500.0, 750.0, 1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 5000.0):
+        if cand + 1e-9 >= need_step:
+            step = float(cand)
+            break
+    xlim_top = 4.0 * step
+    ylim_top = 3.0 * step
+
+    ax.set_xlim(0.0, xlim_top)
+    ax.set_ylim(0.0, ylim_top)
     ax.set_aspect("equal", adjustable="box")
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(step))
+    ax.yaxis.set_major_locator(ticker.MultipleLocator(step))
 
     ax.set_xlabel("$Z'$ ($\\Omega$)")
     ax.set_ylabel("$-Z''$ ($\\Omega$)")
@@ -673,23 +691,22 @@ def plot_nyquist(
     ax.yaxis.set_minor_locator(ticker.AutoMinorLocator(5))
     _bold_ticks(ax)
 
-    leg = ax.legend(loc="upper left", frameon=False, prop={"weight": "bold", "size": 11.5})
+    leg = ax.legend(loc="upper right", frameon=False, prop={"weight": "bold", "size": 11.5})
     for txt in leg.get_texts():
         txt.set_fontweight("bold")
 
-    if add_hf_inset and 0 < hf_max < 0.38 * lim:
-        ax_in = ax.inset_axes([0.50, 0.50, 0.44, 0.44])
+    if add_hf_inset and 0 < max(hf_zr, hf_nzi) < 0.42 * xlim_top:
+        ax_in = ax.inset_axes([0.51, 0.14, 0.42, 0.42])
         for idx, item in enumerate(eis_series):
             zr = np.asarray(item["z_real"], dtype=float)
             nzi = np.asarray(item["neg_z_imag"], dtype=float)
             col = item.get("color") or pal[idx % len(pal)]
-            mk = markers[idx % len(markers)]
-            ax_in.plot(zr, nzi, marker=mk, ms=3.8, mfc="white" if idx % 2 == 1 else col, mec=col, lw=1.2, color=col)
-        in_lim = hf_max * 1.15
-        ax_in.set_xlim(0.0, in_lim)
-        ax_in.set_ylim(0.0, in_lim)
+            ax_in.plot(zr, nzi, marker="o", ms=3.6, mfc=col, mec=col, lw=1.2, color=col)
+        in_u = max((hf_zr * 1.15) / 4.0, (hf_nzi * 1.15) / 3.0, 0.5)
+        ax_in.set_xlim(0.0, 4.0 * in_u)
+        ax_in.set_ylim(0.0, 3.0 * in_u)
         ax_in.set_aspect("equal", adjustable="box")
-        ax_in.tick_params(labelsize=9.5, direction="in")
+        ax_in.tick_params(labelsize=9.5, direction="out")
         for sp in ax_in.spines.values():
             sp.set_linewidth(1.2)
         _bold_ticks(ax_in)

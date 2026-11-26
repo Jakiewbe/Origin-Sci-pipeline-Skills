@@ -1529,17 +1529,7 @@ def _compile_curve_with_inset(
         xs = [float(v) for s in main_layer.series for v in (s.x or []) if isinstance(v, (int, float))]
         ys = [float(v) for s in main_layer.series for v in (s.y or [])]
         if xs and ys:
-            max_x_v, max_y_v = max(xs), max(ys)
-            raw_sp = max(max_x_v, max_y_v)
-            if max_y_v > 2.2 * max(max_x_v, 1.0):
-                span = min(raw_sp * 1.06, max(1200.0, max_x_v * 2.35))
-            else:
-                span = raw_sp * 1.12
-            eq_step = 500.0 if span > 1200.0 else (200.0 if span > 500.0 else (50.0 if span > 120.0 else 10.0))
-            span = math.ceil(span / eq_step) * eq_step
-            if min(min(xs), min(ys)) >= 0.0:
-                x_lims = (0.0, round(span, 6))
-                y_lims = (0.0, round(span, 6))
+            x_lims, y_lims, eq_step = compute_isometric_4_3_bounds(xs, ys)
 
     y_kind = main_block.get("y_axis_kind", "quantitative")
     x_ax = AxisSpec(
@@ -1653,8 +1643,8 @@ def _compile_curve_with_inset(
         mode="curve_with_inset",
         style_preset=cfg.get("style_preset", ot.DEFAULT_STYLE_PRESET),
         theme=theme,
-        width_mm=120.0 if eq_aspect else 140.0,
-        height_mm=120.0 if eq_aspect else 108.0,
+        width_mm=140.0,
+        height_mm=108.0,
         panels=[panel],
         output_dir=cfg.get("output_dir"),
         build_opju=bool(cfg.get("build_opju", True)),
@@ -2934,6 +2924,89 @@ def _compile_matrix_heatmap_new(
     )
 
 
+ISO_4_3_STEPS: Tuple[float, ...] = (
+    0.05,
+    0.1,
+    0.2,
+    0.25,
+    0.3,
+    0.5,
+    1.0,
+    2.0,
+    2.5,
+    3.0,
+    5.0,
+    10.0,
+    15.0,
+    20.0,
+    25.0,
+    30.0,
+    50.0,
+    75.0,
+    100.0,
+    150.0,
+    200.0,
+    250.0,
+    300.0,
+    500.0,
+    750.0,
+    1000.0,
+    1500.0,
+    2000.0,
+    2500.0,
+    3000.0,
+    5000.0,
+    10000.0,
+)
+
+
+def pick_iso_4_3_step(req_x_span: float, req_y_span: float) -> float:
+    """Pick a clean shared `step` so `(4 * step) >= req_x_span` and `(3 * step) >= req_y_span`."""
+    need = max(float(req_x_span) / 4.0, float(req_y_span) / 3.0, 1e-6)
+    for st in ISO_4_3_STEPS:
+        if st + 1e-9 >= need:
+            return float(st)
+    return float(math.ceil(need / 5000.0) * 5000.0)
+
+
+def compute_isometric_4_3_bounds(
+    xs: Sequence[float],
+    ys: Sequence[float],
+) -> Tuple[Tuple[float, float], Tuple[float, float], float]:
+    """
+    Compute physical 1:1 Ohm/inch bounds `(x_bounds, y_bounds, step)` inside a `4:3` (`6.40 x 4.80 in`) frame
+    so `X_span : Y_span == 4 : 3` (`x_max = 4 * step`, `y_max = 3 * step` when `min >= 0`).
+    """
+    if not xs or not ys:
+        return (0.0, 4.0), (0.0, 3.0), 1.0
+    min_x, max_x = float(min(xs)), float(max(xs))
+    min_y, max_y = float(min(ys)), float(max(ys))
+
+    if min_x >= 0.0 and min_y >= 0.0:
+        if max_y > 2.2 * max(max_x, 1.0):
+            # Blocking-electrode low-frequency capacitive spike: frame the semicircle + Warburg transition cleanly
+            cap_y = min(max_y * 1.08, max(900.0, max_x * 1.45))
+            vis_xs = [float(xv) for xv, yv in zip(xs, ys) if float(yv) <= cap_y * 1.05]
+            req_x = max(max(vis_xs) if vis_xs else max_x, max_x * 0.85) * 1.08
+            req_y = cap_y
+        else:
+            req_x = max(max_x * 1.08, 1e-6)
+            req_y = max(max_y * 1.08, 1e-6)
+        step = pick_iso_4_3_step(req_x, req_y)
+        return (0.0, round(4.0 * step, 6)), (0.0, round(3.0 * step, 6)), step
+
+    sp_x = max((max_x - min_x) * 1.12, 1e-6)
+    sp_y = max((max_y - min_y) * 1.12, 1e-6)
+    step = pick_iso_4_3_step(sp_x, sp_y)
+    x0 = 0.0 if min_x >= 0.0 else math.floor(min_x / step) * step
+    y0 = 0.0 if min_y >= 0.0 else math.floor(min_y / step) * step
+    while (x0 + 4.0 * step < max_x * 1.04) or (y0 + 3.0 * step < max_y * 1.04):
+        step = pick_iso_4_3_step(4.0 * step * 1.05, 3.0 * step * 1.05)
+        x0 = 0.0 if min_x >= 0.0 else math.floor(min_x / step) * step
+        y0 = 0.0 if min_y >= 0.0 else math.floor(min_y / step) * step
+    return (round(x0, 6), round(x0 + 4.0 * step, 6)), (round(y0, 6), round(y0 + 3.0 * step, 6)), step
+
+
 def compile_config_to_figure_spec(
     cfg: Dict[str, Any],
     loaded_tables: Optional[Dict[str, Any]] = None,
@@ -3080,8 +3153,8 @@ _MODE_TEMPLATES: Dict[str, Dict[str, Any]] = {
             {
                 "inset_id": "hf_zoom",
                 "mode": "zoom",
-                "bbox_pct": [44.0, 8.0, 46.0, 46.0],
-                "xlim": [0.0, 12.0],
+                "bbox_pct": [51.0, 44.0, 42.0, 42.0],
+                "xlim": [0.0, 16.0],
                 "ylim": [0.0, 12.0],
                 "equal_aspect": True,
                 "show_zoom_box": True,
