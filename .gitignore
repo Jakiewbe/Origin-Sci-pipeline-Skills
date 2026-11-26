@@ -1,0 +1,21 @@
+# Local experimental outputs & private datasets (never commit to public repo)
+verified_demos/
+docs/
+progress.md
+
+# OriginPro & Excel temporary / project artifacts outside examples
+*.opju
+*_unlocked_*.opju
+~$*.xlsx
+~$*.xls
+
+# Python & OS caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,12 @@
+{
+  "name": "sci-origin-pipeline",
+  "displayName": "SciOrigin v6.0 · 跨材料科研分析与 OriginPro 原生出图套件",
+  "version": "6.0.0",
+  "description": "面向多材料表征、电化学动力学与汇总统计的科研工作流：固定「核对数据→选择方法→审查结论→出图与交付」四卡闭环，内置 Times New Roman 加粗与 Arial 常规两套像素级对齐出版预设，100% 原生构建可编辑 Origin (.opju) 并直出 600 DPI LZW .tif / 300 DPI .png 与结构化 Source-Data .xlsx。",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "先核对这批新实验数据的样品、列单位与可用信号，再建议分析方法",
+    "对比当前 XPS 谱区的多组候选分峰模型，检查参数触界与面积比例敏感性",
+    "按 Arial 常规预设或默认新罗马加粗预设生成出版级 Origin 工程与高清图"
+  ]
+}

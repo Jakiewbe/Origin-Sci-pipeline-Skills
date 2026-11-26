@@ -1,0 +1,171 @@
+{
+  "font_family": "Times New Roman",
+  "font_weight": "bold",
+  "mathtext_fontset": "stix",
+  "figure_box_linewidth": 1.8,
+  "inset_box_linewidth": 1.0,
+  "tick_direction": "in",
+  "major_tick_length": 5.5,
+  "minor_tick_length": 3.0,
+  "tick_width": 1.5,
+  "axis_label_size": 15,
+  "tick_label_size": 13,
+  "title_annot_size": 13,
+  "callout_font_size": 11.5,
+  "export": {
+    "png_dpi": 300,
+    "tif_dpi": 600,
+    "tif_compression": "tiff_lzw",
+    "qa_preview_max_px": 960,
+    "qa_preview_jpeg_quality": 82
+  },
+  "origin_native": {
+    "axis_title_pt": 15.0,
+    "dual_y_axis_title_pt": 13.0,
+    "tick_label_pt": 13.0,
+    "legend_pt": 11.5,
+    "value_label_pt": 13.0,
+    "inset_tick_label_pt": 10.0,
+    "curve_w": 900,
+    "fit_envelope_w": 900,
+    "component_w": 700,
+    "baseline_w": 600,
+    "guide_w": 900,
+    "error_band_edge_w": 60,
+    "error_band_transparency": 72,
+    "deconv_fill_transparency": 45,
+    "sphere_3d_symbol_cmd": "-k 20",
+    "pure_black_safe_rgb": [1, 1, 1],
+    "pure_black_origin_int": 16843009,
+    "equal_aspect_square_inch": 3.5,
+    "plot_type_ids": {
+      "line": 200,
+      "scatter": 201,
+      "line_symbol": 202,
+      "column_grouped": 203,
+      "area": 204,
+      "box_violin": 206,
+      "column_stacked": 213,
+      "histogram": 219,
+      "contour_pseudocolor": 226,
+      "tri_contour": 243,
+      "heatmap": 105
+    }
+  },
+  "axis_tick_matrix": {
+    "intensity_arbitrary": {
+      "box_linewidth_pt": 1.8,
+      "x_major": "in",
+      "x_minor": "log10_only",
+      "x_labels": true,
+      "y_major": "none",
+      "y_minor": "none",
+      "y_labels": false,
+      "top_ticks": false,
+      "right_ticks": false
+    },
+    "categorical": {
+      "box_linewidth_pt": 1.8,
+      "x_major": "none",
+      "x_minor": "none",
+      "x_labels": true,
+      "y_major": "in",
+      "y_minor": "log10_only",
+      "y_labels": true,
+      "top_ticks": false,
+      "right_ticks": false
+    },
+    "quantitative": {
+      "box_linewidth_pt": 1.8,
+      "x_major": "in",
+      "x_minor": "log10_only",
+      "x_labels": true,
+      "y_major": "in",
+      "y_minor": "log10_only",
+      "y_labels": true,
+      "top_ticks": false,
+      "right_ticks": false
+    },
+    "dual_y_left": {
+      "box_linewidth_pt": 1.8,
+      "x_major": "in",
+      "x_minor": "none",
+      "x_labels": true,
+      "y_major": "in",
+      "y_minor": "none",
+      "y_labels": true,
+      "top_ticks": false,
+      "right_ticks": false,
+      "origin_y_show_axes": 1,
+      "align_zero": true
+    },
+    "dual_y_right": {
+      "box_linewidth_pt": 1.8,
+      "y2_major": "in",
+      "y2_minor": "none",
+      "y2_labels": true,
+      "bind_right_axis_color": true,
+      "align_zero": true
+    },
+    "inset": {
+      "box_linewidth_pt": 1.0,
+      "x_major": "in_sparse",
+      "y_major": "in_sparse",
+      "max_major_ticks": 4,
+      "x_minor": "log10_only",
+      "y_minor": "log10_only",
+      "top_ticks": false,
+      "right_ticks": false,
+      "omit_redundant_axis_titles": true,
+      "background_color": "#FFFFFF",
+      "origin_layer_type": 6,
+      "origin_layer_unit": 7
+    }
+  },
+  "bar_style": {
+    "grouped_gradient": {
+      "enable_vertical_gradient": true,
+      "edge_color": "#222222",
+      "edge_linewidth_pt": 0.8,
+      "origin_border_cmd": "-pbc -4",
+      "light_luminance_threshold": 0.65,
+      "dark_bottom_white_mix": 0.45,
+      "light_bottom_accent_mix": 0.35,
+      "cool_accent_hex": "#3E86DE",
+      "warm_accent_hex": "#D84B5C",
+      "value_label_size_pt": 13.0,
+      "dense_value_label_size_pt": 10.0,
+      "max_bars_for_full_label_size": 7,
+      "error_bar_color": "#111111",
+      "error_bar_linewidth_pt": 1.0
+    },
+    "stacked_flat": {
+      "enable_vertical_gradient": false,
+      "divider_color": "#FFFFFF",
+      "divider_linewidth_pt": 0.5,
+      "origin_border_cmd": "-pbc -4"
+    }
+  },
+  "deconv_colors": {
+    "raw_scatter": "#2B2B2B",
+    "envelope_fit": "#A02333",
+    "baseline": "#222222",
+    "fill_alpha": 0.56,
+    "components": [
+      "#C5DBF5",
+      "#6579BE",
+      "#E8A3AF",
+      "#3E86DE",
+      "#D84B5C",
+      "#A02333"
+    ]
+  },
+  "series_palette": [
+    "#3E86DE",
+    "#D84B5C",
+    "#6579BE",
+    "#A02333",
+    "#C5DBF5",
+    "#E8A3AF"
+  ]
+}

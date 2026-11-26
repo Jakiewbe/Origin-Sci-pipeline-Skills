@@ -1,0 +1,246 @@
+{
+  "catalog_version": "2.0.0",
+  "engine": "OriginPro Native (.opju + expGraph) & Declarative Chart Grammar",
+  "default_style_preset": "style_publication_minimal",
+  "design_principles": {
+    "box_and_typography": "3.0pt closed 4-side frame (1.6pt for insets, 1.8-2.2pt for multi-panel grids), bold Times New Roman throughout, native Origin XB/YL/YR GraphObjects.",
+    "minimal_tick_matrix": {
+      "intensity_arbitrary": "Left-Y ticks & numbers OFF; bottom-X inward major ticks ON; top/right ticks OFF.",
+      "categorical": "Bottom-X tick lines OFF (semantic sample labels ON, no 'A:' prefix); left-Y inward major ticks ON.",
+      "quantitative": "Bottom-X & left-Y inward major ticks ON; minor ticks OFF except when scale == 'log10'.",
+      "dual_y_left_and_right": "Left-Y & right-Y inward major ticks ON, minor ticks OFF; Layer 1 sets y.showAxes=1; right-Y spine/ticks/YR bound to right-axis semantic color; zero baseline aligned.",
+      "inset": "1.6pt frame, opaque #FFFFFF fill, parent-layer percentage bbox (Origin layer.unit=7), <=4 sparse inward major ticks, redundant axis titles omitted."
+    },
+    "semantic_color_system": {
+      "paired_semantic": "Control/baseline uses paired blues (#3E86DE, #C5DBF5, #6579BE); pulse/treatment uses paired reds (#D84B5C, #A02333, #E8A3AF).",
+      "sandwich_stack": "Stacked columns use flat solid fills + 0.8pt #FFFFFF dividers (never per-segment gradients): bottom inert (#D8DEE9, #C5DBF5) -> middle conventional (#6579BE, #3E86DE) -> top active (#E8A3AF, #D84B5C, #A02333).",
+      "sequential_blue_red": ">5 ordered physical curves interpolate across #2B6CB0 -> #3E86DE -> #6579BE -> #E8A3AF -> #D84B5C -> #A02333 (deep_blue_to_red: #08306B -> #2171B5 -> #4292C6 -> #9ECAE1 -> #FCBBA1 -> #EF3B2C -> #A02333 for >=8 high-rate clusters).",
+      "pseudocolor_zero_white": "2D intensity/DRT maps force zero background to pure white #FFFFFF -> #C5DBF5 -> #6579BE -> #D84B5C -> #A02333 via 1052-byte RIFF .pal."
+    }
+  },
+  "grammar_dataclasses": {
+    "FigureSpec": ["title", "mode", "subtype", "style_preset", "nrows", "ncols", "width_ratios", "height_ratios", "width_mm", "height_mm", "panels", "output_dir", "build_opju", "template_override", "summary_metrics"],
+    "PanelSpec": ["panel_id", "tag", "row", "col", "row_span", "col_span", "x_axis", "y1_axis", "y2_axis", "z_axis", "layers", "insets", "guides", "equal_aspect", "align_zero", "legend_style", "box_linewidth_pt", "share_x_with", "share_y_with"],
+    "LayerSpec": ["layer_id", "mark", "y_axis", "series", "categories", "color_scheme", "palette_colors", "normalize_100", "divider_color", "divider_linewidth_pt", "edge_color", "edge_linewidth_pt", "show_value_labels", "value_label_size_pt", "origin_template", "origin_plot_type"],
+    "SeriesSpec": ["name", "x", "y", "y_err", "y_low", "y_high", "matrix_x", "matrix_y", "matrix_z", "role", "color", "gradient_top_color", "gradient_bottom_color", "label_color", "line_style", "line_width_pt", "marker_style", "marker_size_pt", "source_ref"],
+    "AxisSpec": ["which", "label", "unit", "axis_kind", "scale", "limits", "invert", "categories", "color", "align_zero", "origin_rich_label", "tick_policy"],
+    "InsetSpec": ["inset_id", "mode", "bbox_pct", "xlim", "ylim", "equal_aspect", "show_zoom_box", "zoom_box_color", "background_color", "box_linewidth_pt", "x_axis", "y_axis", "layers"],
+    "GuideSpec": ["kind", "axis", "value", "start", "end", "anchor_pos", "label", "color", "line_style", "line_width_pt", "shoulder_y_frac"]
+  },
+  "modes": [
+    {
+      "mode": "bar_grouped_gradient",
+      "category": "Categorical_Comparison",
+      "summary": "Single-group or multi-group vertical gradient column chart with SD error bars and bold same-hue top value labels.",
+      "origin_native_recipe": {
+        "single_series": "Diagonal sparse Y_i + YErr_i columns plotted individually with plot:=203 (ungrouped) + -pbc -4; optional .otpu gradient slot.",
+        "multi_series": "Template 'COLUMN' + plot:=203 + 1052B discrete RIFF .pal (stretchpal=0, colorinc=1) + -pbc -4."
+      },
+      "required_fields": ["mode", "output_dir", "series"],
+      "optional_fields": ["categories", "input_file", "sheet", "x_col", "y_label", "color_scheme", "show_value_labels", "value_format", "template_override"],
+      "example_config": {
+        "mode": "bar_grouped_gradient",
+        "title": "Raman_ID_IG_Comparison",
+        "output_dir": "./out_id_ig",
+        "y_label": "I_D / I_G",
+        "categories": ["Pristine", "1 C 60s", "100 C 2s", "225 C 2s"],
+        "series": [
+          {
+            "name": "I_D / I_G",
+            "values": [0.94, 1.05, 1.18, 1.29],
+            "y_err": [0.02, 0.03, 0.02, 0.03],
+            "bar_roles": ["pristine", "control", "pulse", "pulse_strong"]
+          }
+        ]
+      }
+    },
+    {
+      "mode": "bar_stacked",
+      "category": "Categorical_Composition",
+      "summary": "Absolute-sum stacked column chart with flat sandwich semantic bands and crisp 0.8pt white inter-band dividers.",
+      "origin_native_recipe": {
+        "template": "STACKCOLUMN",
+        "plot_id": 213,
+        "palette_injection": "1052B discrete RIFF .pal via plot1.colorlist (stretchpal=0); NEVER call gl.group() / layer -g."
+      },
+      "required_fields": ["mode", "output_dir", "stacks"],
+      "optional_fields": ["categories", "input_file", "sheet", "x_col", "y_label", "normalize_100", "show_ribbon_links"],
+      "example_config": {
+        "mode": "bar_stacked",
+        "title": "Short_Pulse_Vdrop_Decomposition",
+        "output_dir": "./out_vdrop_stack",
+        "y_label": "Voltage Drop (V)",
+        "categories": ["100 C", "150 C", "200 C", "225 C"],
+        "stacks": [
+          {"name": "Delta E_0", "role": "inert", "values": [0.08, 0.11, 0.14, 0.16]},
+          {"name": "Delta E_slow", "role": "control", "values": [0.12, 0.16, 0.21, 0.24]},
+          {"name": "Delta V_slow,pol", "role": "pulse", "values": [0.19, 0.27, 0.35, 0.42]},
+          {"name": "Delta V_0,pol", "role": "pulse_strong", "values": [0.31, 0.46, 0.62, 0.74]}
+        ]
+      }
+    },
+    {
+      "mode": "bar_stacked_100pct",
+      "category": "Categorical_Composition",
+      "summary": "Row-normalized 100% percentage stacked column chart for XPS/Raman species evolution and polarization fraction analysis.",
+      "origin_native_recipe": {
+        "template": "StackColP",
+        "plot_id": 213,
+        "palette_injection": "1052B discrete RIFF .pal via plot1.colorlist (stretchpal=0)."
+      },
+      "required_fields": ["mode", "output_dir", "stacks"],
+      "optional_fields": ["categories", "input_file", "sheet", "x_col", "y_label", "show_ribbon_links"],
+      "example_config": {
+        "mode": "bar_stacked_100pct",
+        "title": "XPS_C1s_Species_Share",
+        "output_dir": "./out_c1s_100pct",
+        "y_label": "Area Fraction (%)",
+        "categories": ["Pristine", "1 C 60s", "100 C 2s", "Discharged"],
+        "stacks": [
+          {"name": "C-C / C=C", "role": "inert", "values": [28.4, 34.1, 41.5, 58.2]},
+          {"name": "Semi-ionic C-F", "role": "control", "values": [38.8, 36.3, 32.4, 24.3]},
+          {"name": "Covalent C-F_x", "role": "pulse", "values": [32.8, 29.6, 26.1, 17.5]}
+        ]
+      }
+    },
+    {
+      "mode": "dual_y_combo",
+      "category": "Composite_Dual_Axis",
+      "summary": "Single-panel dual-Y overlay (e.g. left-Y elemental at.% lines with 3D spheres + right-Y 100% functional-group stacked bars, or capacity + Coulombic efficiency) with full-height zero alignment and right-axis color binding.",
+      "origin_native_recipe": {
+        "layer_1": "gl1: layer.x.showAxes=3; layer.y.showAxes=1 (suppresses duplicate right black spine).",
+        "layer_2": "gl2 = gp.add_layer(2) (linked Right-Y), YR & right ticks dyed with right_axis_color, interior upper-frame dual legend."
+      },
+      "required_fields": ["mode", "output_dir", "left_y", "right_y"],
+      "optional_fields": ["categories", "x", "input_file", "sheet", "x_col", "align_zero", "guides"],
+      "example_config": {
+        "mode": "dual_y_combo",
+        "title": "XPS_Elemental_and_C1s_DualY",
+        "output_dir": "./out_xps_dualy",
+        "align_zero": true,
+        "categories": ["Pristine", "1 C 60s", "100 C 2s", "Discharged"],
+        "left_y": {
+          "label": "Elemental Content (at.%)",
+          "geom": "line_scatter",
+          "relevant_elements": ["F", "C"],
+          "series": [
+            {"name": "F (at.%)", "element": "F", "y": [51.2, 46.8, 41.3, 24.5], "color": "#A02333"},
+            {"name": "C (at.%)", "element": "C", "y": [46.5, 50.1, 54.9, 69.8], "color": "#111111"}
+          ]
+        },
+        "right_y": {
+          "label": "C 1s Fraction (%)",
+          "geom": "bar_stacked_100pct",
+          "axis_color": "#3E86DE",
+          "stacks": [
+            {"name": "C-C / C=C", "role": "inert", "values": [28.4, 34.1, 41.5, 58.2]},
+            {"name": "Semi-ionic C-F", "role": "control", "values": [38.8, 36.3, 32.4, 24.3]},
+            {"name": "Covalent C-F_x", "role": "pulse", "values": [32.8, 29.6, 26.1, 17.5]}
+          ]
+        }
+      }
+    },
+    {
+      "mode": "curve_with_inset",
+      "category": "XY_With_Embedded_Layer",
+      "summary": "Main XY curve family with one or more zoom or sub-distribution insets, optional 1:1 square lock (equal_aspect), and main-panel zoom selection box.",
+      "origin_native_recipe": {
+        "inset_layer": "gl_in = gp.add_layer(6) with layer.unit=7 (% of Linked Parent Layer), opaque #FFFFFF fill, 1.6pt box.",
+        "equal_aspect": "Locks physical square layer dimensions (layer.unit=2; width=5.0; height=5.0) for Nyquist."
+      },
+      "required_fields": ["mode", "output_dir", "series", "insets"],
+      "optional_fields": ["x_label", "y_label", "equal_aspect", "guides"],
+      "example_config": {
+        "mode": "curve_with_inset",
+        "title": "EIS_Nyquist_HF_Zoom",
+        "output_dir": "./out_nyquist_zoom",
+        "x_label": "Z' (Ohm)",
+        "y_label": "-Z'' (Ohm)",
+        "equal_aspect": true,
+        "series": [
+          {"name": "1 C 60s", "role": "control", "x": [2.1, 4.5, 9.8, 22.0, 48.0], "y": [0.2, 3.8, 7.2, 12.5, 28.0]},
+          {"name": "100 C 2s Pulse", "role": "pulse", "x": [1.8, 3.2, 6.1, 14.0, 31.0], "y": [0.15, 2.4, 4.3, 8.2, 19.5]}
+        ],
+        "insets": [
+          {"mode": "zoom", "bbox_pct": [44.0, 8.0, 46.0, 46.0], "xlim": [0.0, 12.0], "ylim": [0.0, 12.0], "equal_aspect": true, "show_zoom_box": true}
+        ]
+      }
+    },
+    {
+      "mode": "electrochem_kinetics",
+      "category": "Electrochemical_Kinetics",
+      "summary": "Unified electrochemical kinetics mode supporting subtypes: 'pulse_align' (zero-aligned short pulse + V0/Vslow spans), 'galvanostatic_dqdv' (Q-V + dQ/dV), and 'ragone' (double-log10 energy-power).",
+      "subtypes": ["pulse_align", "galvanostatic_dqdv", "ragone"],
+      "origin_native_recipe": {
+        "pulse_align": "Zero-aligned XYXY curves + sequential_blue_red ramp (>5 curves) + horizontal guides & vertical span annotations.",
+        "galvanostatic_dqdv": "1x2 linked panels (Q-V & smoothed dQ/dV) with peak vertical guides.",
+        "ragone": "layer.x.type=2; layer.y.type=2 (Log10) with inward major + log minor ticks enabled."
+      },
+      "required_fields": ["mode", "subtype", "output_dir", "series"],
+      "optional_fields": ["t_pulse_start", "span_annotations", "dqdv_series", "guides", "x_limits", "y_limits"]
+    },
+    {
+      "mode": "contour_pseudocolor_2d",
+      "category": "Field_2D_Matrix",
+      "summary": "2D continuous pseudocolor contour map (e.g. in-situ DRT gamma(tau), operando XRD/Raman) with pure-white zero background blue-red colormap and optional coupled 1D side_panel.",
+      "origin_native_recipe": {
+        "matrix": "MBook/MSheet.from_np(z_matrix) [shape (ny, nx)] + xymap=(x1, x2, y1, y2) + template 'CONTOUR' + add_mplot(ms, 0, type=226).",
+        "colormap": "1052B continuous RIFF .pal (#FFFFFF -> #C5DBF5 -> #6579BE -> #D84B5C -> #A02333) + ColorMap.LineShow=0."
+      },
+      "required_fields": ["mode", "output_dir"],
+      "optional_fields": ["matrix_x", "matrix_y", "matrix_z", "input_file", "sheet", "transpose", "log_x", "log_y", "z_label", "side_panel"]
+    },
+    {
+      "mode": "chart_grammar",
+      "category": "Universal_MultiPanel_Overlay",
+      "summary": "General declarative multi-panel GridSpec & arbitrary multi-layer overlay grammar.",
+      "required_fields": ["mode", "output_dir", "panels"],
+      "optional_fields": ["nrows", "ncols", "width_ratios", "height_ratios", "width_mm", "height_mm"]
+    },
+    {
+      "mode": "xy_fit_and_band",
+      "category": "XY_Regression_Band",
+      "summary": "Scatter + regression fit curve (linear / power / poly2) with 95% confidence shaded band. Supports subtype='scatter_fit' (scatter + fit + CI annotation) or 'band_only' (multi-series mean lines + y_low/y_high half-transparent bands). R² and equation auto-annotated.",
+      "origin_native_recipe": {
+        "scatter_fit": "Scatter series (line_scatter, line_style=none) + line_band series (y_low/y_high half-transparent fill_alpha=0.20) + text annotation with R² and equation.",
+        "band_only": "Multiple line_band series each with y_low/y_high CI fill."
+      },
+      "required_fields": ["mode", "output_dir"],
+      "optional_fields": ["x", "y", "model", "n_grid", "color", "band_alpha", "subtype", "series", "x_label", "y_label", "color_scheme"]
+    },
+    {
+      "mode": "bode_dual_panel",
+      "category": "Electrochemistry_Impedance",
+      "summary": "EIS Bode plot: 2-row 1-col dual-panel layout. Top panel: |Z| (Ohm) vs Frequency (Hz), log-log axes, X labels hidden, inward log major+minor ticks. Bottom panel: -Phase (deg.) vs Frequency (Hz), log-linear axes, X labels shown. Panels share X axis.",
+      "origin_native_recipe": {
+        "layout": "FigureSpec(nrows=2, ncols=1, height_ratios=[1.0,1.0]); panel_top shares x_axis with panel_bot via share_x_with='panel_top'.",
+        "axes": "Both X: scale=log10, inward ticks, minor_ticks=True. Top Y: scale=log10. Bottom Y: scale=linear."
+      },
+      "required_fields": ["mode", "output_dir", "series"],
+      "optional_fields": ["color_scheme", "title"]
+    },
+    {
+      "mode": "stat_distribution",
+      "category": "Statistical_Distribution",
+      "summary": "Statistical distribution chart for parallel-sample group comparisons. Subtypes: 'box_jitter' (default, box + overlaid jitter dots), 'violin_box' (violin + box), 'half_violin' (half-violin). Each series carries raw parallel-sample y array; color from semantic palette.",
+      "origin_native_recipe": {
+        "box_jitter": "mark=stat_box_jitter, Origin template BOX+DATA+OVERLAP, one column per group.",
+        "violin_box": "mark=stat_box_jitter with style_overrides.subtype='violin_box'.",
+        "half_violin": "mark=stat_box_jitter with style_overrides.subtype='half_violin'."
+      },
+      "required_fields": ["mode", "output_dir", "series"],
+      "optional_fields": ["subtype", "x_label", "y_label", "color_scheme"]
+    },
+    {
+      "mode": "matrix_heatmap",
+      "category": "Field_2D_Matrix",
+      "summary": "2D matrix heatmap with optional per-cell value labels. series[0] carries matrix_x (column labels), matrix_y (row labels), matrix_z (2D float, rows × cols). Default colormap: diverging_blue_white_red with center_zero=True; alternative: pseudocolor_zero_white.",
+      "origin_native_recipe": {
+        "matrix": "MBook/MSheet(matrix_z) + xymap from matrix_x/matrix_y + template 'Heat_Map_With_Labels' (origin_plot_type=105).",
+        "colormap": "diverging_blue_white_red RIFF .pal (center at white #FFFFFF) or pseudocolor_zero_white."
+      },
+      "required_fields": ["mode", "output_dir", "series"],
+      "optional_fields": ["color_scheme", "center_zero", "show_value_labels", "value_format", "x_label", "y_label"]
+    }
+  ]
+}

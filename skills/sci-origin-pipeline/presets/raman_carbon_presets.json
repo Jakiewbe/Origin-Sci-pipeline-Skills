@@ -1,0 +1,70 @@
+{
+  "schema_version": "2.0",
+  "preset_id": "carbon_first_order_raman",
+  "description": "碳材料与脱氟碳极片 Raman 一阶四峰分峰预设（D*, D, D'', G）",
+  "applicable_system": {
+    "material": "具备 850–1950 cm^-1 一阶碳 D/G 带的无定形/石墨化碳及脱氟 CFx",
+    "do_not_use_when": ["无显著 D/G 带的纯无机物/金属氧化物拉曼谱", "仅需看全谱 100–3500 cm^-1 特征峰时（应先用 raw_preview）"]
+  },
+  "laser_wavelength_nm": 532.0,
+  "regions": {
+    "FirstOrder": {
+      "x_window": [850.0, 1950.0],
+      "invert_x": false,
+      "x_label": "Wavenumber (cm$^{-1}$)",
+      "y_label": "Intensity (a.u.)",
+      "baseline": "linear",
+      "subgroup_name": null,
+      "components": [
+        {
+          "name": "D*",
+          "label": "D*",
+          "center": 1185.0,
+          "center_bounds": [1130.0, 1235.0],
+          "fwhm": 140.0,
+          "fwhm_bounds": [60.0, 260.0],
+          "eta": 0.0,
+          "color": "#C5DBF5",
+          "in_subgroup": false,
+          "note": "sp3杂化无定形边缘/C-F畸变碳晶格振动带（纯高斯包络防洛伦兹翼串扰）— 惰性基底 ice"
+        },
+        {
+          "name": "D",
+          "label": "D",
+          "center": 1345.0,
+          "center_bounds": [1320.0, 1365.0],
+          "fwhm": 95.0,
+          "fwhm_bounds": [45.0, 180.0],
+          "eta": 0.75,
+          "color": "#D84B5C",
+          "in_subgroup": false,
+          "note": "A1g对称呼吸模式（缺陷与面内边界无序度）— 高能/缺陷主峰 rose"
+        },
+        {
+          "name": "D''",
+          "label": "D''",
+          "center": 1505.0,
+          "center_bounds": [1470.0, 1540.0],
+          "fwhm": 115.0,
+          "fwhm_bounds": [50.0, 200.0],
+          "eta": 0.0,
+          "color": "#6579BE",
+          "in_subgroup": false,
+          "note": "无定形碳间隙与乱层堆垛贡献（纯高斯包络）— 粘结剂/弱峰 indigo"
+        },
+        {
+          "name": "G",
+          "label": "G",
+          "center": 1588.0,
+          "center_bounds": [1568.0, 1608.0],
+          "fwhm": 78.0,
+          "fwhm_bounds": [35.0, 140.0],
+          "eta": 0.65,
+          "color": "#3E86DE",
+          "in_subgroup": false,
+          "note": "E2g面内sp2碳伸缩振动带（石墨化恢复指标）— 共价主峰 blue"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,272 @@
+{
+  "schema_version": "2.0",
+  "preset_id": "li_cfx_xps",
+  "applicable_system": {
+    "material": "氟化碳 (CFx) 粉末及一次锂电池正极极片（含 PVDF 粘结剂与导电炭）",
+    "applicable_when": [
+      "样品体系明确为氟化碳 (CFx) 或锂-氟化碳一次电池界面的 C 1s、F 1s、Li 1s",
+      "已通过工作卡一确认工作簿谱区名称、单位（Counts / s）及样品所处状态（未放电、浅放电或深放电）"
+    ],
+    "do_not_use_when": [
+      "非氟化碳材料体系（如铜/镍金属镀层、盐雾腐蚀样、过渡金属氧化物、常规硅/硫负极等）",
+      "样品中未建模的陌生谱区（例如 O 1s）——必须先用 raw_preview 出原谱预览再单独制定方案"
+    ]
+  },
+  "charge_referencing": {
+    "primary_anchor": {
+      "region": "C1s",
+      "component": "C-C/C=C",
+      "target_eV": 284.8,
+      "search_window_eV": [283.8, 285.8],
+      "fallback_target_eV": 290.0,
+      "fallback_window_eV": [286.8, 293.5],
+      "fallback_note": "仅适用于无导电炭/污染碳极弱的纯 CFx 粉末；若为金属或非氟化碳体系不得启用此 290.0 eV 回退。"
+    },
+    "cross_check_anchor": {
+      "region": "F1s",
+      "component": "LiF",
+      "expected_separation_from_CC_eV": 400.2,
+      "tolerance_eV": 0.65,
+      "min_cc_pct": 5.0,
+      "min_target_pct": 8.0,
+      "note": "深放电产生大量绝缘 LiF 时，需交叉核验 BE(F1s LiF) - BE(C1s C-C) ≈ 400.2 ± 0.65 eV。"
+    }
+  },
+  "regions": {
+    "C1s": {
+      "x_window": [281.0, 296.0],
+      "invert_x": true,
+      "x_label": "Binding Energy (eV)",
+      "y_label": "Intensity (a.u.)",
+      "baseline": "shirley",
+      "subgroup_name": "CF_internal",
+      "components": [
+        {
+          "name": "C-C/C=C",
+          "label": "C-C/C=C",
+          "center": 284.8,
+          "center_bounds": [284.5, 285.1],
+          "fwhm": 1.25,
+          "fwhm_bounds": [0.85, 1.80],
+          "eta": 0.25,
+          "color": "#A8C4E8",
+          "in_subgroup": false,
+          "note": "sp2/sp3碳骨架与导电剂贡献 — 惰性基底色 steel-ice"
+        },
+        {
+          "name": "CH2(PVDF)/C-O",
+          "label": "CH$_2$(PVDF)/C-O",
+          "center": 286.2,
+          "center_bounds": [285.8, 286.6],
+          "fwhm": 1.40,
+          "fwhm_bounds": [0.95, 2.00],
+          "eta": 0.25,
+          "color": "#6579BE",
+          "in_subgroup": false,
+          "note": "PVDF -CH2- 链段及表面C-O贡献 — 粘结剂/弱峰 indigo"
+        },
+        {
+          "name": "C=O",
+          "label": "C=O",
+          "center": 287.5,
+          "center_bounds": [287.0, 288.1],
+          "fwhm": 1.50,
+          "fwhm_bounds": [1.00, 2.20],
+          "eta": 0.25,
+          "color": "#7BA8E0",
+          "in_subgroup": false,
+          "note": "表面羰基/碳酸盐微量贡献 — 中浅蓝"
+        },
+        {
+          "name": "S.I. C-F",
+          "label": "S.I. C-F",
+          "center": 289.1,
+          "center_bounds": [288.5, 289.6],
+          "fwhm": 1.45,
+          "fwhm_bounds": [0.95, 2.00],
+          "eta": 0.25,
+          "color": "#E88B9C",
+          "in_subgroup": true,
+          "note": "半离子型 C-F 键（高倍率活性位点）— rose-pink"
+        },
+        {
+          "name": "C-F",
+          "label": "C-F",
+          "center": 290.0,
+          "center_bounds": [289.6, 290.5],
+          "fwhm": 1.35,
+          "fwhm_bounds": [0.95, 1.90],
+          "eta": 0.25,
+          "color": "#3E86DE",
+          "in_subgroup": true,
+          "note": "共价型 C-F 主峰 — blue"
+        },
+        {
+          "name": "C-F2 (+PVDF)",
+          "label": "C-F$_2$ (+PVDF)",
+          "center": 291.2,
+          "center_bounds": [290.6, 292.3],
+          "fwhm": 1.70,
+          "fwhm_bounds": [1.05, 2.50],
+          "eta": 0.25,
+          "color": "#D84B5C",
+          "in_subgroup": true,
+          "note": "边缘 -CF2 基团与 PVDF -CF2- 叠加峰 — rose"
+        }
+      ]
+    },
+    "F1s": {
+      "x_window": [682.0, 694.0],
+      "invert_x": true,
+      "x_label": "Binding Energy (eV)",
+      "y_label": "Intensity (a.u.)",
+      "baseline": "shirley",
+      "subgroup_name": "Organic_F_internal",
+      "components": [
+        {
+          "name": "LiF",
+          "label": "LiF",
+          "center": 685.0,
+          "center_bounds": [684.5, 685.6],
+          "fwhm": 1.50,
+          "fwhm_bounds": [1.00, 2.15],
+          "eta": 0.30,
+          "color": "#D84B5C",
+          "in_subgroup": false,
+          "note": "放电转化产物 LiF / 界面无机氟 — 高能/缺陷 rose"
+        },
+        {
+          "name": "S.I. C-F",
+          "label": "S.I. C-F",
+          "center": 687.1,
+          "center_bounds": [686.4, 687.8],
+          "fwhm": 1.55,
+          "fwhm_bounds": [1.05, 2.15],
+          "eta": 0.25,
+          "color": "#E8A3AF",
+          "in_subgroup": true,
+          "note": "半离子型 C-F 氟信号 — pink"
+        },
+        {
+          "name": "C-F",
+          "label": "C-F",
+          "center": 688.5,
+          "center_bounds": [687.8, 688.9],
+          "fwhm": 1.60,
+          "fwhm_bounds": [1.10, 2.20],
+          "eta": 0.25,
+          "color": "#3E86DE",
+          "in_subgroup": true,
+          "note": "共价 C-F 主信号 — blue"
+        },
+        {
+          "name": "C-F2 (+PVDF)",
+          "label": "C-F$_2$ (+PVDF)",
+          "center": 689.7,
+          "center_bounds": [689.1, 690.5],
+          "fwhm": 1.65,
+          "fwhm_bounds": [1.10, 2.35],
+          "eta": 0.25,
+          "color": "#6579BE",
+          "in_subgroup": true,
+          "note": "-CF2 与 PVDF 有机氟贡献 — indigo"
+        }
+      ]
+    },
+    "Li1s": {
+      "x_window": [52.0, 60.5],
+      "invert_x": true,
+      "x_label": "Binding Energy (eV)",
+      "y_label": "Intensity (a.u.)",
+      "baseline": "linear",
+      "subgroup_name": null,
+      "components": [
+        {
+          "name": "LiF / Li-species",
+          "label": "LiF / Li$^+$",
+          "center": 55.8,
+          "center_bounds": [55.0, 56.6],
+          "fwhm": 1.75,
+          "fwhm_bounds": [1.10, 2.60],
+          "eta": 0.30,
+          "color": "#D84B5C",
+          "in_subgroup": false,
+          "note": "放电产物 LiF 为主的锂物种峰（未放电极片常处于弱信号 SNR<3.5）"
+        }
+      ]
+    }
+  },
+  "candidate_models": {
+    "F1s": {
+      "M1_LitStandard_Strict": {
+        "title": "Model 1: 文献窄窗口标准模型 (C-F ≤ 688.4 eV)",
+        "rationale": "按传统放电态 Li/CFx 文献窄区间固定（C-F 限定 687.3–688.4 eV）；适合强 LiF 放电态且主峰落在 ~687.8–688.3 eV 的极片，对高结合能原始极片易触发峰位触界。",
+        "x_window": [682.0, 694.0],
+        "invert_x": true,
+        "x_label": "Binding Energy (eV)",
+        "y_label": "Intensity (a.u.)",
+        "baseline": "shirley",
+        "subgroup_name": "Organic_F_internal",
+        "components": [
+          {"name": "LiF", "label": "LiF", "center": 685.0, "center_bounds": [684.5, 685.5], "fwhm": 1.55, "fwhm_bounds": [1.00, 2.20], "eta": 0.30, "color": "#D84B5C", "in_subgroup": false, "note": "无机 LiF"},
+          {"name": "S.I. C-F", "label": "S.I. C-F", "center": 686.6, "center_bounds": [686.0, 687.2], "fwhm": 1.60, "fwhm_bounds": [1.05, 2.20], "eta": 0.25, "color": "#E8A3AF", "in_subgroup": true, "note": "半离子型 C-F"},
+          {"name": "C-F", "label": "C-F", "center": 687.8, "center_bounds": [687.3, 688.4], "fwhm": 1.65, "fwhm_bounds": [1.10, 2.30], "eta": 0.25, "color": "#3E86DE", "in_subgroup": true, "note": "共价 C-F（窄上界 688.4 eV）"},
+          {"name": "C-F2 (+PVDF)", "label": "C-F$_2$ (+PVDF)", "center": 688.9, "center_bounds": [688.4, 689.8], "fwhm": 1.75, "fwhm_bounds": [1.10, 2.50], "eta": 0.25, "color": "#6579BE", "in_subgroup": true, "note": "-CF2 + PVDF"}
+        ]
+      },
+      "M2_CFCentered_PeakAnchored": {
+        "title": "Model 2: 共价 C-F 主峰锚定模型 (C-F ~688.1–688.9 eV)",
+        "rationale": "以原始高氟化度 CFx 主峰实际峰值位置 (~688.6 eV) 锚定共价 C-F，避免 C-F2 越界吞并主峰，并用更紧 FWHM 相干约束与 C 1s 共价主导特征保持物理一致。",
+        "x_window": [682.0, 694.0],
+        "invert_x": true,
+        "x_label": "Binding Energy (eV)",
+        "y_label": "Intensity (a.u.)",
+        "baseline": "shirley",
+        "subgroup_name": "Organic_F_internal",
+        "fwhm_reg_strength": 0.05,
+        "max_fwhm_rel_spread": 0.18,
+        "components": [
+          {"name": "LiF", "label": "LiF", "center": 685.0, "center_bounds": [684.5, 685.6], "fwhm": 1.50, "fwhm_bounds": [1.00, 2.10], "eta": 0.30, "color": "#D84B5C", "in_subgroup": false, "note": "无机 LiF"},
+          {"name": "S.I. C-F", "label": "S.I. C-F", "center": 687.2, "center_bounds": [686.5, 687.9], "fwhm": 1.55, "fwhm_bounds": [1.10, 2.10], "eta": 0.25, "color": "#E8A3AF", "in_subgroup": true, "note": "半离子型 C-F"},
+          {"name": "C-F", "label": "C-F", "center": 688.6, "center_bounds": [688.1, 688.9], "fwhm": 1.60, "fwhm_bounds": [1.10, 2.20], "eta": 0.25, "color": "#3E86DE", "in_subgroup": true, "note": "共价 C-F（锚定主峰）"},
+          {"name": "C-F2 (+PVDF)", "label": "C-F$_2$ (+PVDF)", "center": 689.7, "center_bounds": [689.1, 690.5], "fwhm": 1.65, "fwhm_bounds": [1.10, 2.30], "eta": 0.25, "color": "#6579BE", "in_subgroup": true, "note": "边缘 -CF2 / PVDF"}
+        ]
+      },
+      "M3_PVDF_Envelope_Split": {
+        "title": "Model 3: PVDF/高能CF2 居中拆分模型 (对标极片混合粘结剂)",
+        "rationale": "允许 PVDF -CF2- 与极片 C-F 在主包络左右对称分担（C-F 687.9–688.5 eV，C-F2(+PVDF) 688.7–689.5 eV），用于检验粘结剂高能组分是否被吸收。",
+        "x_window": [682.0, 694.0],
+        "invert_x": true,
+        "x_label": "Binding Energy (eV)",
+        "y_label": "Intensity (a.u.)",
+        "baseline": "shirley",
+        "subgroup_name": "Organic_F_internal",
+        "fwhm_reg_strength": 0.04,
+        "max_fwhm_rel_spread": 0.20,
+        "components": [
+          {"name": "LiF", "label": "LiF", "center": 685.1, "center_bounds": [684.5, 685.8], "fwhm": 1.45, "fwhm_bounds": [1.00, 2.10], "eta": 0.30, "color": "#D84B5C", "in_subgroup": false, "note": "无机 LiF"},
+          {"name": "S.I. C-F", "label": "S.I. C-F", "center": 687.3, "center_bounds": [686.6, 687.8], "fwhm": 1.50, "fwhm_bounds": [1.05, 2.10], "eta": 0.25, "color": "#E8A3AF", "in_subgroup": true, "note": "半离子型 C-F"},
+          {"name": "C-F", "label": "C-F", "center": 688.25, "center_bounds": [687.85, 688.55], "fwhm": 1.45, "fwhm_bounds": [1.05, 1.95], "eta": 0.25, "color": "#3E86DE", "in_subgroup": true, "note": "共价 C-F（居中窗口）"},
+          {"name": "C-F2 (+PVDF)", "label": "C-F$_2$ (+PVDF)", "center": 688.95, "center_bounds": [688.65, 689.60], "fwhm": 1.45, "fwhm_bounds": [1.05, 2.00], "eta": 0.25, "color": "#6579BE", "in_subgroup": true, "note": "-CF2 + PVDF（对称拆分）"}
+        ]
+      },
+      "M4_NoLiF_3Comp_Organic": {
+        "title": "Model 4: 无 LiF 三组分有机氟模型 (适配未放电纯态极片)",
+        "rationale": "当 Li 1s 呈低信噪比本底 (SNR < 3.5) 时省略 LiF 峰，仅拟合三类有机 C-F，避免对噪声肩部硬拟合引发低能侧漂移。",
+        "x_window": [682.0, 694.0],
+        "invert_x": true,
+        "x_label": "Binding Energy (eV)",
+        "y_label": "Intensity (a.u.)",
+        "baseline": "shirley",
+        "subgroup_name": "Organic_F_internal",
+        "fwhm_reg_strength": 0.04,
+        "max_fwhm_rel_spread": 0.22,
+        "components": [
+          {"name": "S.I. C-F", "label": "S.I. C-F", "center": 687.1, "center_bounds": [686.3, 687.8], "fwhm": 1.60, "fwhm_bounds": [1.10, 2.20], "eta": 0.25, "color": "#E8A3AF", "in_subgroup": true, "note": "半离子型 C-F"},
+          {"name": "C-F", "label": "C-F", "center": 688.6, "center_bounds": [688.1, 689.0], "fwhm": 1.65, "fwhm_bounds": [1.10, 2.20], "eta": 0.25, "color": "#3E86DE", "in_subgroup": true, "note": "共价 C-F"},
+          {"name": "C-F2 (+PVDF)", "label": "C-F$_2$ (+PVDF)", "center": 689.8, "center_bounds": [689.1, 690.8], "fwhm": 1.70, "fwhm_bounds": [1.10, 2.40], "eta": 0.25, "color": "#6579BE", "in_subgroup": true, "note": "-CF2 + PVDF"}
+        ]
+      }
+    }
+  }
+}
