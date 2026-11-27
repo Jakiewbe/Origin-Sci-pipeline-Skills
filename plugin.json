@@ -1,7 +1,7 @@
 {
   "name": "sci-origin-pipeline",
-  "displayName": "SciOrigin v7.0 · 全科研领域数据分析与 OriginPro 原生出图套件",
-  "version": "7.0.0",
+  "displayName": "SciOrigin v8.0 · 全科研领域数据分析与 OriginPro 原生出图套件",
+  "version": "8.0.0",
   "description": "面向材料表征、电化学、生物医学/多组学、药理临床生存/ROC、化学催化、物理光学、地学测井与 AI4Science 的全科研领域工作流：内置 6 大可插拔学科包与 41 种分析及声明式图型模式（含三元相图、极坐标/雷达图、断轴、非线性双 X 轴与二维矢量场），固定「核对数据→选择方法→审查结论→原生交付」四卡闭环，支持双套出版预设 × 9 种顶刊栏宽规格（Nature/Science/Cell/ACS/IEEE）与色盲安全色板，100% 原生构建可编辑 Origin (.opju) 并同源直出 600 DPI LZW .tif、300 DPI .png、无损矢量 .pdf 与中英双语 Source_Data.xlsx。",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [

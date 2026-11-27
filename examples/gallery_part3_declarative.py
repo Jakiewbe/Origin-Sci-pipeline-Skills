@@ -1,5 +1,5 @@
 """
-gallery_part3_declarative.py - Part 3 Synthetic Declarative Grammar Showcase Generator for SciOrigin v6.0.
+gallery_part3_declarative.py - Part 3 Synthetic Declarative Grammar Showcase Generator for SciOrigin v8.0.
 
 Renders 11 publication-grade figures (6 upgraded core demos + 5 brand-new declarative grammar modes)
 natively in headless OriginPro 2024 (`skip_origin=False`), downscaling exported 300 DPI PNGs via

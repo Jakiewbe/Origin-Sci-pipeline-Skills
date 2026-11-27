@@ -9,7 +9,7 @@ description: >-
   9 journal column specs (Nature/Science/Cell/ACS/IEEE), and bilingual EN/ZH Source_Data.xlsx workbooks.
 ---
 
-# SciOrigin Pipeline v7.0 · 全科研领域数据分析与 OriginPro 原生出图总控
+# SciOrigin Pipeline v8.0 · 全科研领域数据分析与 OriginPro 原生出图总控
 
 本 Skill 固定跨学科科研数据分析与成图的**核对数据、选择方法、统计/模型敏感性审查与原生出版交付闭环**。每次先看真实数据和研究问题，再决定方法、检验口径与结论边界。
 

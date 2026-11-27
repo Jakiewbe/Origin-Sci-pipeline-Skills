@@ -4134,7 +4134,7 @@ def build_composite_opju(
                 )
                 panel_sheets.append((letter, p, wks))
 
-        # Master 2x2 Composite Page (row-aligned 4:3 `4.10 x 3.08 in` + 1:1 `3.08 x 3.08 in` physical boxes)
+        # Master 2x2 Composite Page (grid-aligned 4:3 `4.10 x 3.075 in` physical boxes across all 1D & EIS Nyquist panels)
         op.pe.cd(root_path)
         gp_comp = op.new_graph(lname=f"{title}_MasterComposite")
         col_step_in = 6.55
@@ -4149,7 +4149,7 @@ def build_composite_opju(
             r_i, c_i = idx // nc, idx % nc
             c_left_in = 1.70 + c_i * col_step_in
             c_top_in = 0.96 + r_i * row_step_in
-            c_box_in = (c_left_in, c_top_in, 4.10, 3.08)
+            c_box_in = (c_left_in, c_top_in, 4.10, 3.075)
             rect_c = ot.rect_in_to_page_pct(*c_box_in, comp_w_in, comp_h_in)
 
             gl_c = gp_comp[0] if idx == 0 else gp_comp.add_layer(0)
@@ -4250,7 +4250,7 @@ def build_composite_opju(
                 )
 
             elif ptype == "nyquist":
-                max_zr_c, max_nzi_c, hf_max_c = 0.0, 0.0, 0.0
+                max_zr_c, max_nzi_c, hf_zr_c, hf_nzi_c = 0.0, 0.0, 0.0, 0.0
                 leg_c = []
                 for wks_e, item in ref_obj:
                     c_hex = ot.normalize_hex(item.get("color", "#3E86DE"))
@@ -4267,19 +4267,15 @@ def build_composite_opju(
                     max_zr_c = max(max_zr_c, float(np.max(zr_a)))
                     max_nzi_c = max(max_nzi_c, float(np.max(nzi_a)))
                     n_hf_c = max(6, len(zr_a) // 3)
-                    hf_max_c = max(hf_max_c, float(np.max(zr_a[:n_hf_c])), float(np.max(nzi_a[:n_hf_c])))
+                    hf_zr_c = max(hf_zr_c, float(np.max(zr_a[:n_hf_c])))
+                    hf_nzi_c = max(hf_nzi_c, float(np.max(nzi_a[:n_hf_c])))
 
-                raw_sp_c = max(max_zr_c, max_nzi_c)
-                lim = min(raw_sp_c * 1.06, max(1200.0, max_zr_c * 2.35)) if max_nzi_c > 2.2 * max(max_zr_c, 1.0) else max(raw_sp_c * 1.12, 1.0)
-                step_c = 1000.0 if lim > 1500.0 else (500.0 if lim > 800.0 else 200.0)
-                lim = math.ceil(lim / step_c) * step_c
+                x_lim_c, y_lim_c, step_c = compute_isometric_4_3_bounds(max_zr_c, max_nzi_c)
+                xlim_c_top = x_lim_c[1]
+                ylim_c_top = y_lim_c[1]
 
-                nyq_left_in = c_left_in + 0.5 * (4.10 - 3.08)
-                nyq_box_in = (nyq_left_in, c_top_in, 3.08, 3.08)
-                rect_nyq = ot.rect_in_to_page_pct(*nyq_box_in, comp_w_in, comp_h_in)
-
-                gl_c.set_xlim(0.0, lim)
-                gl_c.set_ylim(0.0, lim)
+                gl_c.set_xlim(0.0, xlim_c_top)
+                gl_c.set_ylim(0.0, ylim_c_top)
                 _style_origin_layer_boxed(
                     gl_c,
                     "\\i(Z') (\\g(W))",
@@ -4288,20 +4284,26 @@ def build_composite_opju(
                     box_thickness=cell_bt,
                     tick_label_pt=16.5,
                     axis_title_pt=20.0,
-                    layer_rect_pct=rect_nyq,
-                    layer_rect_in=nyq_box_in,
+                    layer_rect_pct=rect_c,
+                    layer_rect_in=c_box_in,
                     remove_legend=True,
                     op=op,
                     gp=gp_comp,
                     layer_num_1based=lay_num,
                 )
                 activate_layer(op, gp_comp, lay_num)
-                gl_c.lt_exec(f"layer.x.inc={step_c}; layer.y.inc={step_c};")
+                gl_c.lt_exec(
+                    f"layer.x.from=0; layer.x.to={xlim_c_top}; layer.x.inc={step_c}; "
+                    f"layer.y.from=0; layer.y.to={ylim_c_top}; layer.y.inc={step_c};"
+                )
                 if p_title_str:
-                    add_page_text_label(op, gp_comp, gl_c, lay_num, f"PnlTitle{lay_num}", p_title_str, rect_nyq[0] + 0.5 * rect_nyq[2], max(1.8, rect_nyq[1] - 2.3), fontsize=17.5, pos_scatter=0, format_math=False)
+                    add_page_text_label(op, gp_comp, gl_c, lay_num, f"PnlTitle{lay_num}", p_title_str, rect_c[0] + 0.5 * rect_c[2], max(1.8, rect_c[1] - 2.3), fontsize=17.5, pos_scatter=0, format_math=False)
 
-                if p.get("add_hf_inset", True) and 0.0 < hf_max_c < 0.45 * lim:
-                    in_lim_c = math.ceil((hf_max_c * 1.18) / 20.0) * 20.0 if hf_max_c > 25.0 else hf_max_c * 1.18
+                hf_max_c = max(hf_zr_c, hf_nzi_c)
+                if p.get("add_hf_inset", True) and 0.0 < hf_max_c < 0.45 * xlim_c_top:
+                    in_u_c = max((hf_zr_c * 1.16) / 4.0, (hf_nzi_c * 1.16) / 3.0)
+                    in_u_c = math.ceil(in_u_c / 5.0) * 5.0 if in_u_c >= 15.0 else max(round(in_u_c, 2), 0.5)
+                    in_xl_c, in_yl_c = 4.0 * in_u_c, 3.0 * in_u_c
                     gl_in_c = gp_comp.add_layer(0)
                     in_lay_num = int(gp_comp.obj.Layers.Count)
                     activate_layer(op, gp_comp, in_lay_num)
@@ -4311,8 +4313,8 @@ def build_composite_opju(
                     font_ic = f"layer.x.label.font={f_id_c}; layer.y.label.font={f_id_c}; " if f_id_c > 0 else ""
                     wks_c_bg = op.new_book("w", lname=f"{title}_CInBG")[0]
                     wks_c_bg.cols = 3
-                    wks_c_bg.from_list(0, [0.0, in_lim_c], axis="X")
-                    wks_c_bg.from_list(1, [in_lim_c, in_lim_c], axis="Y")
+                    wks_c_bg.from_list(0, [0.0, in_xl_c], axis="X")
+                    wks_c_bg.from_list(1, [in_yl_c, in_yl_c], axis="Y")
                     wks_c_bg.from_list(2, [0.0, 0.0], axis="Y")
                     pc_bu = gl_in_c.add_plot(wks_c_bg, coly=1, colx=0, type="l")
                     pc_bl = gl_in_c.add_plot(wks_c_bg, coly=2, colx=0, type="l")
@@ -4322,10 +4324,11 @@ def build_composite_opju(
                     pc_bu.transparency = 0
                     pc_bl.transparency = 100
                     gl_in_c.lt_exec("range rbu = !1; set rbu -w 0; range rbl = !2; set rbl -w 0;")
-                    in_li = nyq_left_in + 0.46 * 3.08
-                    in_ti = c_top_in + 0.38 * 3.08
-                    in_si = 0.44 * 3.08
-                    ins_c_scale = ot.compute_origin_layer_scale(in_si, in_si, comp_w_in, comp_h_in)
+                    in_wi = 0.42 * c_box_in[2]
+                    in_hi = 0.42 * c_box_in[3]
+                    in_li = c_left_in + 0.51 * c_box_in[2]
+                    in_ti = c_top_in + 0.42 * c_box_in[3]
+                    ins_c_scale = ot.compute_origin_layer_scale(in_wi, in_hi, comp_w_in, comp_h_in)
                     for wks_e, item in ref_obj:
                         c_hex_i = ot.normalize_hex(item.get("color", "#3E86DE"))
                         p_ic = gl_in_c.add_plot(wks_e, coly=2, colx=1, type="y")
@@ -4335,19 +4338,23 @@ def build_composite_opju(
                         gl_in_c.lt_exec(f"range ric = !{ic_idx}; set ric -w {int(round((cell_cw_u * 0.72) / ins_c_scale))};")
                         p_ic.symbol_kind = 2
                         p_ic.symbol_interior = 0
-                    gl_in_c.set_xlim(0.0, in_lim_c)
-                    gl_in_c.set_ylim(0.0, in_lim_c)
+                    gl_in_c.set_xlim(0.0, in_xl_c)
+                    gl_in_c.set_ylim(0.0, in_yl_c)
                     ins_c_bt = max(1.0, round(cell_bt * 0.72, 2))
-                    ins_c_tk_pt = ot.compensate_origin_layer_pt(11.5, in_si, in_si, comp_w_in, comp_h_in)
+                    ins_c_tk_pt = ot.compensate_origin_layer_pt(11.5, in_wi, in_hi, comp_w_in, comp_h_in)
+                    inc_cx = compute_nice_linear_step(0.0, in_xl_c, max_ticks=3) or (2.0 * in_u_c)
+                    inc_cy = compute_nice_linear_step(0.0, in_yl_c, max_ticks=3) or in_u_c
                     gl_in_c.lt_exec(
                         f"layer.fsize=1; "
-                        f"layer.unit=2; layer.left={in_li}; layer.top={in_ti}; layer.width={in_si}; layer.height={in_si}; "
+                        f"layer.unit=2; layer.left={in_li}; layer.top={in_ti}; layer.width={in_wi}; layer.height={in_hi}; "
                         f"layer.color={white_i}; layer.x.grid.show=0; layer.y.grid.show=0; "
                         f"layer.x.showAxes=3; layer.y.showAxes=3; "
                         f"layer.x.thickness={ins_c_bt}; layer.y.thickness={ins_c_bt}; layer.x2.thickness={ins_c_bt}; layer.y2.thickness={ins_c_bt}; "
                         f"layer.x.color={ink_i}; layer.y.color={ink_i}; layer.x2.color={ink_i}; layer.y2.color={ink_i}; "
                         f"layer.x.label.color={ink_i}; layer.y.label.color={ink_i}; "
                         f"layer.x.ticks=1; layer.y.ticks=1; layer.x2.ticks=0; layer.y2.ticks=0; "
+                        f"layer.x.from=0; layer.x.to={in_xl_c}; layer.x.inc={inc_cx}; "
+                        f"layer.y.from=0; layer.y.to={in_yl_c}; layer.y.inc={inc_cy}; "
                         f"layer.x.maxTicks=3; layer.y.maxTicks=3; "
                         f"{font_ic}"
                         f"layer.x.label.pt={ins_c_tk_pt}; layer.y.label.pt={ins_c_tk_pt}; layer.x.label.bold={bold_i}; layer.y.label.bold={bold_i}; "
@@ -4355,7 +4362,7 @@ def build_composite_opju(
                     )
 
                 configure_custom_legend(
-                    gl_c, leg_c, fontsize=13.5, pos_mode="corner_upper_right", layer_rect_pct=rect_nyq, op=op, gp=gp_comp, layer_num_1based=lay_num
+                    gl_c, leg_c, fontsize=13.5, pos_mode="corner_upper_right", layer_rect_pct=rect_c, op=op, gp=gp_comp, layer_num_1based=lay_num
                 )
 
             elif ptype == "xy_series":
@@ -4412,7 +4419,7 @@ def build_composite_opju(
                     gl_c, leg_c, fontsize=13.5, pos_mode="corner_upper_right", layer_rect_pct=rect_c, op=op, gp=gp_comp, layer_num_1based=lay_num
                 )
 
-            tag_left_in = (nyq_left_in if ptype == "nyquist" else c_left_in) - 1.24
+            tag_left_in = c_left_in - 1.24
             tag_top_in = max(0.28, c_top_in - 0.30)
             add_page_text_label(
                 op,

@@ -2,7 +2,7 @@
 gallery_part2_electrochem.py - 100% Analytical Electrochemistry, Impedance & Operando 2D Gallery (Part 2).
 
 Renders 7 publication-grade showcase figures directly in headless OriginPro 2024:
-  1. demo_hero_composite_2x2.jpg      - 2x2 Multi-Modal Master Figure (Deconv + Diffraction Stack + Rate Q-V + 1:1 Nyquist)
+  1. demo_hero_composite_2x2.jpg      - 2x2 Multi-Modal Master Figure (Deconv + Diffraction Stack + Rate Q-V + 4:3 Isometric Nyquist)
   2. demo_rate_galvanostatic.jpg      - 7-rate galvanostatic discharge profiles (0.1 C .. 10 C, deep_blue_to_red)
   3. demo_dqdv_coupled.jpg            - 1x2 coupled charge/discharge Q-V + smoothed dQ/dV redox peaks
   4. demo_pulse_align.jpg             - Zero-aligned short-pulse transients across 6 rates + Delta V_0 & Delta V_slow spans
@@ -170,7 +170,7 @@ def _build_hero_composite_panels() -> List[Dict[str, Any]]:
         qx, vy = _galvanostatic_discharge_curve(q_m, ir_d, pl_s, n_pts=160)
         rate_series.append({"name": r_lbl, "x": qx, "y": vy, "color": col_hex})
 
-    # (d) 1:1 Nyquist impedance curves sized cleanly across [0..600, 0..600] Ohm
+    # (d) Isometric 1 Ohm = 1 Ohm Nyquist curves inside standard 4:3 [0..600, 0..450] Ohm frame
     freqs_nyq = np.logspace(5.0, -1.2, 40)
     nyq_defs = [
         ("Sample 1", 18.0, 215.0, 1.8e-5, 95.0, 0.032, "#2B6CB0"),

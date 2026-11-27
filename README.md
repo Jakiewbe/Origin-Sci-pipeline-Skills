@@ -2,7 +2,7 @@
   <img src="./assets/logo.svg" width="88" height="88" alt="SciOrigin Logo"/>
 </p>
 
-<h1 align="center">Origin-Sci-Pipeline-Skills · SciOrigin v7.0</h1>
+<h1 align="center">Origin-Sci-Pipeline-Skills · SciOrigin v8.0</h1>
 
 <p align="center">
   <strong>全科研领域数据分析、统计严谨性审计与 100% OriginPro 原生无头出图 Agent Skill 套件</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-7.0.0-2B6CB0?style=flat-square" alt="Version 7.0.0"/>
+  <img src="https://img.shields.io/badge/Version-8.0.0-2B6CB0?style=flat-square" alt="Version 8.0.0"/>
   <img src="https://img.shields.io/badge/OriginPro-2024%2B%20Native%20(.opju)-D84B5C?style=flat-square" alt="OriginPro Native"/>
   <img src="https://img.shields.io/badge/Domain_Packs-6%20All--Science%20Packs-009E73?style=flat-square" alt="6 All-Science Domain Packs"/>
   <img src="https://img.shields.io/badge/Modes-41%20Modes%20%2F%2043%20Live%20Demos-3E86DE?style=flat-square" alt="41 Modes / 43 Live Demos"/>
@@ -37,7 +37,7 @@
 ## 端到端全科研审计与原生渲染架构 | End-to-End Architecture
 
 <p align="center">
-  <img src="./assets/workflow_banner.svg" width="100%" alt="SciOrigin v7.0 All-Science End-to-End Scientific Audit &amp; Headless OriginPro 2024 Pipeline"/>
+  <img src="./assets/workflow_banner.svg" width="100%" alt="SciOrigin v8.0 All-Science End-to-End Scientific Audit &amp; Headless OriginPro 2024 Pipeline"/>
 </p>
 
 <p align="center">
@@ -319,14 +319,14 @@ python .\examples\generate_synthetic_gallery.py --part 5   # Part 5: 10 张临�
 
 ```text
 Origin-Sci-pipeline-Skills/
-├── plugin.json                                     # Agent 插件清单 (v7.0.0)
+├── plugin.json                                     # Agent 插件清单 (v8.0.0)
 ├── install_skill.ps1                               # 工作区 / 全局插件一键递归同步脚本 (纯 ASCII)
 ├── assets/
 │   ├── logo.svg                                    # 套件矢量徽标
 │   ├── workflow_banner.svg                         # 四卡审计、6 大学科包与无头 OriginPro 2024 架构横幅
 │   └── gallery/                                    # 43 张无头 OriginPro 2024 实时渲染全学科合成展示图
 ├── examples/
-│   ├── generate_synthetic_gallery.py               # 合成画廊统一 CLI 入口 (--part 1|2|3|4|5|all)
+│   ├── generate_synthetic_gallery.py               # 合成画廊统一 CLI 入口 (--part 1|2|3|4|5|all / --verify-only)
 │   ├── gallery_part1_characterization.py           # Part 1：9 张仪器表征解析与多模型分峰敏感性生成器
 │   ├── gallery_part2_electrochem.py                # Part 2：7 张 2×2 多模态主图、电化学动力学与原位 2D 生成器
 │   ├── gallery_part3_declarative.py                # Part 3：11 张双预设对照、统计箱线、回归置信带与矩阵热图生成器
